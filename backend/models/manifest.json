@@ -1,0 +1,101 @@
+{
+  "manifest_version": 1,
+  "note": "Published checkpoints only. Run `python tools/fetch_models.py` to download, then it pins resolved revision and sha256 here. Entries without sha256 stay unavailable. enforce=false keeps a signal review-only.",
+  "models": {
+    "asr": {
+      "signal": "transcript",
+      "kind": "faster_whisper",
+      "enabled": true,
+      "path": "faster-whisper-base",
+      "model_id": "Systran/faster-whisper-base",
+      "revision": "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66",
+      "license": "MIT",
+      "task": "automatic-speech-recognition",
+      "languages": [
+        "multilingual"
+      ],
+      "sample_rate": 16000,
+      "checksum_file": "model.bin",
+      "sha256": "d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9",
+      "enforce": false,
+      "evaluation_report": null
+    },
+    "spoof": {
+      "signal": "voice_authenticity",
+      "kind": "audio_classification",
+      "enabled": true,
+      "path": "deepfake-audio-detector-wav2vec2",
+      "model_id": "Bgeorge/deepfake-audio-detector-wav2vec2",
+      "revision": "7bdcadcb5d47522c0237ef95a97702761fc05baf",
+      "license": "CC BY-NC 4.0 (review intended use before redistribution or commercial deployment)",
+      "task": "audio-classification",
+      "languages": [],
+      "sample_rate": 16000,
+      "positive_label": "fake",
+      "threshold": 0.5,
+      "window_s": 1.0,
+      "label_mapping_verified": false,
+      "checksum_file": "model.safetensors",
+      "sha256": "2f5f95a1722bd6e9349ccd3a38adadd7dccad501e84d99c708f7d893dc93f2e5",
+      "enforce": false,
+      "evaluation_report": null
+    },
+    "text_scam": {
+      "signal": "coercion_text",
+      "kind": "sequence_classification",
+      "enabled": true,
+      "path": "scam-detection",
+      "model_id": "bangta/Scam-detection",
+      "revision": "d1cffe625ecdfdcaf208cd2b6ee8fe769a16fd0c",
+      "license": "see model card",
+      "task": "text-classification",
+      "languages": [
+        "en",
+        "vi"
+      ],
+      "positive_label": "LABEL_1",
+      "threshold": 0.69,
+      "checksum_file": "model.safetensors",
+      "sha256": "0a9bdf90a5b434f1c8dace55f4578862bdc6aff46adb4a2926e448cb81d6d8e3",
+      "enforce": false,
+      "evaluation_report": null
+    },
+    "text_nli": {
+      "signal": "coercion_text",
+      "kind": "zero_shot_nli",
+      "enabled": false,
+      "path": "mdeberta-v3-base-mnli-xnli",
+      "model_id": "MoritzLaurer/mDeBERTa-v3-base-mnli-xnli",
+      "revision": "main",
+      "license": "MIT",
+      "task": "zero-shot-classification",
+      "languages": [
+        "en",
+        "hi"
+      ],
+      "positive_label": "an attempt to pressure someone into sending money or sharing a code",
+      "hypotheses": [
+        "an attempt to pressure someone into sending money or sharing a code",
+        "an ordinary payment conversation"
+      ],
+      "threshold": 0.7,
+      "checksum_file": "model.safetensors",
+      "sha256": null,
+      "enforce": false,
+      "evaluation_report": null
+    },
+    "graph_gnn": {
+      "signal": "recipient_graph",
+      "kind": "graph",
+      "enabled": false,
+      "path": "graph-model",
+      "model_id": "none (no published compatible checkpoint)",
+      "revision": "-",
+      "license": "-",
+      "task": "graph-classification",
+      "sha256": null,
+      "enforce": false,
+      "evaluation_report": null
+    }
+  }
+}

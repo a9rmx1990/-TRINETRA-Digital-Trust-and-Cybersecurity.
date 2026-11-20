@@ -1,4 +1,0 @@
-langgraph>=1,<2
-fastmcp>=2.13,<4
-redis>=5,<8
-psycopg[binary]>=3.2,<4

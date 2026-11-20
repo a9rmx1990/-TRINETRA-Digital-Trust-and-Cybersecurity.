@@ -1,30 +1,34 @@
-class PcmCapture extends AudioWorkletProcessor {
+// AudioWorklet: downsample the input channel to 16 kHz mono Int16 and post ~100 ms frames
+// together with the measured RMS of those exact samples (used for the level meter).
+class PcmWorklet extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.frame = new DataView(new ArrayBuffer(8000));
-    this.index = 0;
-    this.port.onmessage = () => {
-      this.finished = true;
-      this.flush();
-      this.port.postMessage(null);
-    };
+    this.ratio = sampleRate / 16000;
+    this.pos = 0;
+    this.out = new Int16Array(1600);
+    this.n = 0;
+    this.sumSq = 0;
   }
-
-  flush() {
-    if (!this.index) return;
-    const chunk = this.frame.buffer.slice(0, this.index * 2);
-    this.port.postMessage(chunk, [chunk]);
-    this.index = 0;
-  }
-
   process(inputs) {
-    if (this.finished) return false;
-    for (const sample of inputs[0]?.[0] ?? []) {
-      this.frame.setInt16(this.index++ * 2,
-        Math.round(Math.max(-1, Math.min(1, sample)) * 32767), true);
-      if (this.index === 4000) this.flush();
+    const ch = inputs[0] && inputs[0][0];
+    if (!ch) return true;
+    for (let i = 0; i < ch.length; i++) {
+      this.pos += 1;
+      if (this.pos >= this.ratio) {
+        this.pos -= this.ratio;
+        const v = Math.max(-1, Math.min(1, ch[i]));
+        this.out[this.n++] = v < 0 ? v * 0x8000 : v * 0x7fff;
+        this.sumSq += v * v;
+        if (this.n === this.out.length) {
+          const rms = Math.sqrt(this.sumSq / this.n);
+          this.port.postMessage({ pcm: this.out.buffer, rms }, [this.out.buffer]);
+          this.out = new Int16Array(1600);
+          this.n = 0;
+          this.sumSq = 0;
+        }
+      }
     }
     return true;
   }
 }
-registerProcessor('pcm-capture', PcmCapture);
+registerProcessor("pcm-worklet", PcmWorklet);

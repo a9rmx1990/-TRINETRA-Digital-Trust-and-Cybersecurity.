@@ -1,25 +1,21 @@
-Caller workflow
 
-> Historical reference. See the [primary architecture](agentic.pdf), [active phases](plan.md) and [runtime](runtime.md).
+Copy this prompt into an agent running on a machine with internet access:
 
-1. Show a clean landing page with one primary action, “Start a voice session.”
-2. Explain why the bank analyzes the audio and ask for consent before accessing the microphone. Let the caller start and end the session. Show clear states for connecting, listening, analyzing, and retrying.
-3. After the voice session, take the caller to the payment form. Automatically attach the voice session to the submission. Keep technical scores and fraud rules inside the SOC console.
-4. Analyze the audio for signs of AI generation and combine that evidence with the payment risk signals. Use three meaningful outcomes for voice analysis: likely genuine, suspected synthetic, and inconclusive. Handle silence, poor audio, and unavailable models explicitly.
-5. Show the caller the actual payment status: submitted, verification required, or under review. Use “settled” only when the payment system confirms it.
+Work in the TRINETRA repository. Install and integrate the three models currently enabled in backend/models/manifest.json:
 
-SOC workflow
+1. asr — Systran/faster-whisper-base
+2. spoof — Bgeorge/deepfake-audio-detector-wav2vec2
+3. text_scam — bangta/Scam-detection
 
-1. Give analysts a separate, authenticated console. Create a case automatically when a payment requires verification or review.
-2. Add an AI agent that reviews the case evidence, prioritizes the queue, summarizes what triggered the decision, and recommends the next action. Show the evidence behind each recommendation, including voice analysis, relevant transcript excerpts, and transaction graph signals where available.
-3. Let the agent prepare cases and recommendations automatically. Require an authorized analyst to approve actions such as releasing a payment or freezing an account. Record those actions in the audit trail.
+Use Python 3.12 or 3.13. Install backend/requirements.txt and backend/requirements-models.txt in a project virtual environment. Use backend/tools/fetch_models.py to download the checkpoints into backend/models, pin their resolved revisions, and record their SHA-256 checksums in the manifest. If a checkpoint's actual files or labels differ from what the adapter expects, make the smallest necessary code or manifest correction and explain it.
 
-Design and delivery
+Test real inference through backend/app/inference.py using a suitable speech sample and text inputs. Confirm that:
+- the manifest reports all three models as available;
+- speech transcription, voice authenticity, and text classification return results without inference errors;
+- the payment flow stores the resulting evidence and the SOC case displays it;
+- the relevant backend tests pass;
+- the models still load with HF_HUB_OFFLINE=1.
 
-- Use restrained colors, clear typography, consistent spacing, and accessible forms. Make both workflows responsive and keyboard accessible.
-- Remove demo scenario buttons and fixture controls from the user-facing experience. Keep fixtures available for automated tests.
-- Make microphone denial, dropped sessions, low-confidence results, and service failures recoverable. Use plain banking language throughout.
-- Verify the complete flow from voice capture to payment decision and SOC review. Report which paths were tested and which still depend on external services.
-- At handoff, list any required model checkpoints, packages, services, and API keys. Give the exact environment variable names and setup steps. Keep credentials on the backend and provide a .env.example with placeholders.
+Do not use mock model outputs as proof that installation works. Do not enable text_nli or graph_gnn: text_nli is disabled, and graph_gnn has no selected checkpoint. Keep all model signals review-only (enforce: false); there is no labelled evaluation dataset to justify automatic enforcement. Report each model's exact revision, checksum, test result, and any remaining limitation. Check the voice detector's CC BY-NC 4.0 licence before suggesting commercial use.
 
-One distinction to preserve: a browser microphone session and a live call with a bank representative are different integrations. TRINETRA currently supports the microphone session. A live representative call needs a telephony or contact center provider. For the existing project, local Whisper, spoof detection, coercion, and graph models use local artifacts configured through TRINETRA_MODELS. The SOC investigator uses local evidence and optionally a self-hosted model. Runtime and model setup (docs/runtime.md)
+The repository’s download path is fetch_models.py (backend/tools/fetch_models.py); its model list and current settings are in manifest.json (backend/models/manifest.json).
