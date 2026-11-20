@@ -1,0 +1,8 @@
+{
+  "spoof": {"path": "/absolute/path/to/wavlm-spoof", "version": "voice-reviewed-1", "positive_index": 1, "reviewed_genuine_threshold": null, "reviewed_hold_threshold": null},
+  "asr": {"path": "/absolute/path/to/whisper-ct2", "version": "whisper-reviewed-1"},
+  "coercion": {"path": "/absolute/path/to/xlmr-coercion", "version": "text-reviewed-1", "positive_labels": ["authority", "escrow", "urgency"]},
+  "nli": {"path": "/absolute/path/to/nli", "version": "nli-reviewed-1", "labels": ["coercive transfer", "authority impersonation"], "languages": ["en"]},
+  "graph": {"path": "/absolute/path/to/graph.pt", "version": "graph-reviewed-1"},
+  "fusion": {"path": "/absolute/path/to/fusion.json", "version": "fusion-reviewed-1"}
+}

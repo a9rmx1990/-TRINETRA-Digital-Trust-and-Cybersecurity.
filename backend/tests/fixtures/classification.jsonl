@@ -1,0 +1,16 @@
+{"text": "Monthly rent for November.", "language": "en", "expected": "benign", "audio": true}
+{"text": "Reimbursing you for the groceries we bought yesterday.", "language": "en", "expected": "benign", "audio": true}
+{"text": "Please pay the attached invoice by Friday as agreed.", "language": "en", "expected": "benign", "audio": true}
+{"text": "Please call your bank using the number on your card. Never share your verification code.", "language": "en", "expected": "benign", "audio": false}
+{"text": "The school fee is due today. I already checked the amount with the school.", "language": "en", "expected": "benign", "audio": false}
+{"text": "I will wait until you have checked the account details.", "language": "en", "expected": "benign", "audio": false}
+{"text": "I am a police officer. Transfer your savings now or you will be arrested.", "language": "en", "expected": "risk", "audio": true}
+{"text": "Read me your one-time bank code now so I can stop your account being frozen.", "language": "en", "expected": "risk", "audio": false}
+{"text": "Move your money into my safe account immediately. Do not tell your bank.", "language": "en", "expected": "risk", "audio": true}
+{"text": "You have won a cash prize. Send a processing fee to claim it.", "language": "en", "expected": "risk", "audio": false}
+{"text": "Keep me on the line and send the money. If you hang up I will have you arrested.", "language": "en", "expected": "risk", "audio": false}
+{"text": "Your son is in my custody. Pay me now if you want him released.", "language": "en", "expected": "risk", "audio": true}
+{"text": "यह नवंबर महीने का किराया है।", "language": "hi", "expected": "benign", "audio": false}
+{"text": "मैं पुलिस से बोल रहा हूँ। अभी पैसे भेजो वरना तुम्हें गिरफ्तार कर लिया जाएगा।", "language": "hi", "expected": "risk", "audio": false}
+{"text": "ಇದು ನವೆಂಬರ್ ತಿಂಗಳ ಬಾಡಿಗೆ.", "language": "kn", "expected": "benign", "audio": false}
+{"text": "ನಾನು ಪೊಲೀಸ್ ಅಧಿಕಾರಿ. ತಕ್ಷಣ ಹಣ ಕಳುಹಿಸಿ, ಇಲ್ಲದಿದ್ದರೆ ನಿಮ್ಮನ್ನು ಬಂಧಿಸುತ್ತೇವೆ.", "language": "kn", "expected": "risk", "audio": false}

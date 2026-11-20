@@ -1,0 +1,42 @@
+% Historical reference. The active design is Figure 1 in agentic.pdf.
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{enumitem}
+
+\title{\textbf{Problem Statement Summary: Project TRINETRA}\\\large Digital Trust and Real-Time AI Cyber Fraud Interception}
+\author{Track: Digital Trust and Cybersecurity}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section*{1. The Core Problem}
+Generative AI allows cybercriminals to execute hyper-realistic scams—such as cloning the voice of an executive or family member, and coercing victims through fake law enforcement threats. Because the terrified or deceived victims authorize the fund transfers themselves using their genuine PINs and passwords, traditional bank security systems see nothing wrong and let the stolen money clear instantly into criminal networks.
+
+\section*{2. Where and When It Is Used}
+TRINETRA acts as an intelligent security checkpoint embedded directly into bank transaction gateways and fraud operation centers.
+
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Where it operates:} Inside retail banking platforms, instant payment gateways (like UPI and wire transfers), and bank customer support authorization desks.
+    \item \textbf{Conditions that trigger it:}
+    \begin{itemize}
+        \item High-value or sudden uncharacteristic money transfers.
+        \item Out-of-band phone calls or audio voice notes used to confirm wire payments.
+        \item Transfers heading to newly created bank accounts that quickly disperse money across multiple wallets within seconds.
+    \end{itemize}
+\end{itemize}
+
+\section*{3. Real-World Examples}
+
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{CEO Voice Clone Scam:} An employee receives an urgent call from what sounds exactly like their CEO's voice demanding an immediate vendor payment. While the voice sounds genuine, TRINETRA detects microscopic synthetic voice irregularities and places the transfer on hold.
+    \item \textbf{The ``Digital Arrest'' Extortion:} A senior citizen is placed under hours of fake video interrogation by scammers posing as federal police and is instructed to transfer savings to a ``safe government verification account.'' TRINETRA flags the destination account as part of a suspicious money-mule ring and halts the transaction before funds are lost.
+    \item \textbf{Rapid Multi-Hop Mule Ring:} Fraudsters steal funds and route them across five different bank accounts within 45 seconds to cash out at ATMs before the victim realizes they were scammed. TRINETRA traces the sudden chain reaction and locks the mule accounts in real time.
+\end{enumerate}
+
+\section*{4. Desired Outcome}
+TRINETRA protects digital trust by shifting bank security from \textit{post-incident reporting} (after money is gone) to \textit{real-time active interception} (holding the transaction and asking for verification before money leaves the bank).
+
+\end{document}
