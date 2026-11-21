@@ -1,3 +1,4 @@
+//SOC analyst done with the 5 agents using langgraph , but need to work on audio
 import { ArrowLeft, Check, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { formatDateTime, formatDuration } from "../lib/format";
