@@ -1,4 +1,4 @@
-import { Mic, RotateCcw, Square, X } from "lucide-react";
+import { AudioLines, FileAudio, Mic, RotateCcw, Square, Upload, X } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { clockTime } from "../lib/format";
 import { Notice, Spinner } from "./ui";
@@ -38,10 +38,31 @@ export function VoiceStep({ rec, onCancel, onContinue, contactName, amountText, 
   rec: Rec; onCancel: () => void; onContinue: () => void; contactName: string; amountText: string; purpose?: string;
 }) {
   const [consent, setConsent] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [fileName, setFileName] = useState("");
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const cid = useId();
   const { phase, call } = rec;
   const recording = phase === "recording";
   const busy = phase === "requesting" || phase === "analyzing";
+
+  function selectFile(file?: File) {
+    if (!file || busy || recording) return;
+    setFileName(file.name);
+    if (consent) {
+      void rec.uploadFile(file);
+    } else {
+      setPendingFile(file);
+    }
+  }
+
+  function changeConsent(agreed: boolean) {
+    setConsent(agreed);
+    if (agreed && pendingFile) {
+      setPendingFile(null);
+      void rec.uploadFile(pendingFile);
+    }
+  }
 
   useEffect(() => {
     if (phase === "ready") setConsent(true);
@@ -52,15 +73,15 @@ export function VoiceStep({ rec, onCancel, onContinue, contactName, amountText, 
       <div className="space-y-2">
         <h2 className="text-xl font-semibold text-ink">Confirm by voice</h2>
         <p className="max-w-[60ch] text-base text-[#3A4458]">
-          Say who you’re requesting money from and why. For example: “I’m requesting {amountText || "this amount"} from {contactName || "my contact"} for {purpose?.trim() ? purpose.trim().replace(/[.]$/, "").toLowerCase() : "rent"}.”
-          The sandbox screens the recording for signs of pressure.
+          Record or upload a short voice clip saying who you’re requesting money from and why. For example: “I’m requesting {amountText || "this amount"} from {contactName || "my contact"} for {purpose?.trim() ? purpose.trim().replace(/[.]$/, "").toLowerCase() : "rent"}.” The sandbox screens the audio for signs of pressure and synthetic speech.
         </p>
+        <p className="text-sm text-muted">When external screening is enabled, your completed audio is sent to WasItAIGenerated for a voice prediction.</p>
       </div>
 
       <details className="group rounded-md border border-line bg-white px-3.5 py-2.5 text-sm text-[#3A4458]">
         <summary className="cursor-pointer font-semibold text-ink">How the recording is used</summary>
         <ul className="mt-2 list-disc space-y-1 pl-5">
-          <li>Audio streams to the bank only while you record and is discarded once screening finishes.</li>
+          <li>Recorded or uploaded audio is sent for screening and discarded once screening finishes.</li>
           <li>The sandbox keeps measured results (speech duration, transcript if available, screening scores) with this request.</li>
           <li>An unused recording expires after 10 minutes. You can cancel at any time.</li>
         </ul>
@@ -68,7 +89,7 @@ export function VoiceStep({ rec, onCancel, onContinue, contactName, amountText, 
 
       <label htmlFor={cid} className="flex items-start gap-3 text-base text-ink">
         <input id={cid} type="checkbox" className="mt-1 h-4 w-4 rounded border-line text-primary focus:ring-primary"
-               checked={consent} disabled={recording || busy || phase === "ready"} onChange={(e) => setConsent(e.target.checked)} />
+               checked={consent} disabled={recording || busy || phase === "ready"} onChange={(e) => changeConsent(e.target.checked)} />
         <span>I agree to voice screening for this request.</span>
       </label>
 
@@ -82,7 +103,7 @@ export function VoiceStep({ rec, onCancel, onContinue, contactName, amountText, 
             ) : phase === "ready" ? (
               <span className="text-ok">Recording accepted</span>
             ) : (
-              <span className="text-muted">Microphone off</span>
+              <span className="text-muted">Ready to record or upload</span>
             )}
           </div>
           <p className="num text-2xl font-semibold tracking-tight text-ink" aria-label={`Elapsed ${Math.floor(rec.elapsed / 1000)} seconds`}>
@@ -106,6 +127,30 @@ export function VoiceStep({ rec, onCancel, onContinue, contactName, amountText, 
             <X className="h-4 w-4" aria-hidden />Cancel request
           </button>
         </div>
+        {!recording && (
+          <div
+            className={`mt-4 rounded-lg border-2 border-dashed p-5 text-center transition-colors ${dragging ? "border-primary bg-[#F0F7FF]" : "border-line bg-canvas"} ${busy ? "opacity-60" : ""}`}
+            onDragOver={(e) => { e.preventDefault(); if (!busy) setDragging(true); }}
+            onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false); }}
+            onDrop={(e) => { e.preventDefault(); setDragging(false); selectFile(e.dataTransfer.files[0]); }}
+          >
+            <div className="mx-auto flex max-w-md flex-col items-center gap-2">
+              {fileName && phase === "ready" ? <FileAudio className="h-5 w-5 text-primary" aria-hidden /> : <AudioLines className="h-5 w-5 text-primary" aria-hidden />}
+              <p className="break-all text-sm font-medium text-ink" aria-live="polite">
+                {pendingFile?.name ?? (busy && fileName ? "Analyzing uploaded audio…" : fileName && phase === "ready" ? fileName : "Drop an audio file here, or choose a file")}
+              </p>
+              <p className="text-xs text-muted" aria-live="polite">
+                {pendingFile ? "Check the voice screening box above to analyze this file." : "Audio files up to 45 seconds and 20 MB"}
+              </p>
+              <label className="btn-secondary relative mt-1 focus-within:ring-2 focus-within:ring-primary">
+                <Upload className="h-4 w-4" aria-hidden />Choose audio file
+                <input className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-default"
+                       type="file" accept="audio/*,.wav,.mp3,.m4a,.aac,.ogg,.flac,.webm" disabled={busy}
+                       onChange={(e) => { selectFile(e.currentTarget.files?.[0]); e.currentTarget.value = ""; }} />
+              </label>
+            </div>
+          </div>
+        )}
       </div>
 
       {phase === "denied" && (
@@ -121,7 +166,7 @@ export function VoiceStep({ rec, onCancel, onContinue, contactName, amountText, 
         <Notice tone="warn" title="Record again">{REASON[call.quality_reason ?? ""] ?? "The recording could not be used."}</Notice>
       )}
       {(phase === "interrupted" || phase === "error") && (
-        <Notice tone="bad" title="Recording interrupted">{rec.error ?? "The recording stopped unexpectedly."} Record again to continue.</Notice>
+        <Notice tone="bad" title={phase === "error" && fileName ? "Audio upload failed" : "Recording interrupted"}>{rec.error ?? "The recording stopped unexpectedly."} Try again to continue.</Notice>
       )}
       {phase === "ready" && call && call.language_supported === false && (
         <Notice tone="info" title="Recorded, but your language could not be screened automatically">

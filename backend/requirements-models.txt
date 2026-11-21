@@ -1,5 +1,6 @@
 # Optional local inference. Install, then run tools/fetch_models.py to download and pin checkpoints.
 faster-whisper==1.2.1
+onnxruntime>=1.18
 transformers>=4.46,<5
 torch>=2.4
 safetensors>=0.4

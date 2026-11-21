@@ -6,6 +6,7 @@ export type RecPhase = "idle" | "requesting" | "denied" | "unsupported" | "recor
   | "unusable" | "interrupted" | "error";
 
 const MAX_MS = 45_000;
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
 /**
  * Captures microphone audio after consent and streams 16 kHz mono PCM to the server.
@@ -77,6 +78,62 @@ export function useRecorder() {
     }
   }, [flush, teardown]);
 
+  const uploadFile = useCallback(async (file: File) => {
+    setError(null);
+    setCall(null);
+    setElapsed(0);
+    setLevels([]);
+    failed.current = false;
+    if (file.size > MAX_FILE_BYTES) {
+      setError("Choose an audio file smaller than 20 MB.");
+      setPhase("error");
+      return;
+    }
+    setPhase("requesting");
+    let context: AudioContext | null = null;
+    let id: string | null = null;
+    try {
+      context = new AudioContext();
+      const decoded = await context.decodeAudioData(await file.arrayBuffer());
+      if (!decoded.duration || decoded.duration > MAX_MS / 1000) {
+        throw new Error("Choose an audio clip that is 45 seconds or shorter.");
+      }
+      const offline = new OfflineAudioContext(1, Math.ceil(decoded.duration * 16_000), 16_000);
+      const source = offline.createBufferSource();
+      source.buffer = decoded;
+      source.connect(offline.destination);
+      source.start();
+      const resampled = await offline.startRendering();
+      const samples = resampled.getChannelData(0);
+      const pcm = new Int16Array(samples.length);
+      for (let i = 0; i < samples.length; i++) {
+        pcm[i] = Math.round(Math.max(-1, Math.min(1, samples[i])) * 32767);
+      }
+      await context.close();
+      context = null;
+      const created = await api.startCall();
+      id = created.id;
+      callIdRef.current = id;
+      setPhase("analyzing");
+      // Keep each PCM request below the backend's 256 KB chunk limit.
+      const chunkSamples = 16_000 * 8;
+      for (let offset = 0; offset < pcm.length; offset += chunkSamples) {
+        await api.sendPcm(id, pcm.slice(offset, offset + chunkSamples).buffer);
+      }
+      const st = await api.finishCall(id);
+      setCall(st);
+      setElapsed(decoded.duration * 1000);
+      setPhase(st.usable ? "ready" : "unusable");
+    } catch (e) {
+      if (id) api.deleteCall(id).catch(() => undefined);
+      callIdRef.current = null;
+      setError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : "Could not analyze that audio file.");
+      setPhase("error");
+    } finally {
+      context?.close().catch(() => undefined);
+    }
+  }, []);
+
   const start = useCallback(async () => {
     setError(null);
     setLevels([]);
@@ -147,5 +204,5 @@ export function useRecorder() {
     setError(null);
   }, [phase, teardown]);
 
-  return { phase, elapsed, levels, call, error, start, stop, reset, maxMs: MAX_MS };
+  return { phase, elapsed, levels, call, error, start, stop, uploadFile, reset, maxMs: MAX_MS };
 }

@@ -6,7 +6,8 @@ export type Beneficiary = { id: string; display_name: string; account_ref_masked
 export type CallStatus = { id: string; status: "open" | "finished" | "expired" | "deleted"; created_ms: number;
   expires_ms: number; finished_ms: number | null; duration_ms: number; voiced_ms: number; usable: boolean;
   quality_reason: string | null; language: string | null; language_supported: boolean | null;
-  transcript_status: string | null; fresh_for_submission: boolean; used_by_payment: boolean };
+  transcript_status: string | null; voice_prediction: "real" | "fake" | "uncertain" | null;
+  fresh_for_submission: boolean; used_by_payment: boolean };
 export type PaymentState = "SETTLED" | "VERIFICATION_REQUIRED" | "HELD" | "BLOCKED" | "REJECTED";
 export type Receipt = { payment_id: string; reference: string; state: PaymentState; amount_minor: number;
   direction: "incoming" | "outgoing";
@@ -42,7 +43,7 @@ export const api = {
   sendPcm: (id: string, chunk: ArrayBuffer) =>
     request<{ bytes: number }>(`/api/v2/calls/${id}/pcm`, { method: "POST", raw: chunk, token: t(),
       headers: { "Content-Type": "application/octet-stream" } }),
-  finishCall: (id: string) => request<CallStatus>(`/api/v2/calls/${id}/finish`, { method: "POST", token: t(), timeoutMs: 60_000 }),
+  finishCall: (id: string) => request<CallStatus>(`/api/v2/calls/${id}/finish`, { method: "POST", token: t(), timeoutMs: 90_000 }),
   getCall: (id: string) => request<CallStatus>(`/api/v2/calls/${id}`, { token: t() }),
   deleteCall: (id: string) => request<void>(`/api/v2/calls/${id}`, { method: "DELETE", token: t() }),
   requestMoney: (key: string, body: { account_id: string; beneficiary_id: string; amount_minor: number; channel: string;

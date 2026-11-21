@@ -86,7 +86,12 @@ signals and cannot establish the requester’s identity.
 
 The browser's AudioWorklet streams 16 kHz mono PCM. The server measures speech activity and rejects silence, too-short or clipped audio before any payment exists. Raw audio lives in bounded memory (or the separate Redis audio cache) and is discarded when the call finishes. Only measured results are stored. `POST /payments` refuses a missing, foreign, unfinished, unusable, used or expired capture and creates nothing. An identical retry of an already committed request replays its receipt even after the capture has expired.
 
-## Local models
+## Voice screening and local models
+
+Live voice authenticity uses WasItAIGenerated. Set `TRINETRA_VOICE_PROVIDER=wasitai`
+and `WASITAI_API_KEY` in the backend environment and install curl 8.3 or newer.
+If the provider cannot return a verdict, the analyst case shows voice screening
+as unavailable. Whisper transcription and spoken-content screening run locally.
 
 `backend/models/manifest.json` lists published checkpoints only. Entries stay **unavailable** until downloaded and pinned:
 
@@ -96,10 +101,15 @@ python backend/tools/fetch_models.py      # resolves commit hashes and writes sh
 HF_HUB_OFFLINE=1 ./scripts/start.sh       # inference runs from local storage
 ```
 
+To screen with the pinned AASIST-L checkpoint in the payment flow, start with
+`TRINETRA_VOICE_PROVIDER=local HF_HUB_OFFLINE=1 ./scripts/start.sh`. AASIST-L
+provides a diagnostic score and a review-only prediction. The policy treats
+the result as inconclusive.
+
 | Signal | Checkpoint | Default |
 |---|---|---|
 | Speech to text | Systran/faster-whisper-base (CTranslate2) | review-only |
-| Voice authenticity | Bgeorge/deepfake-audio-detector-wav2vec2 (CC BY-NC 4.0: review before redistribution) | inconclusive with diagnostic scores until the conflicting class labels are validated |
+| Voice authenticity | WasItAIGenerated | review-only Real/Fake/Uncertain prediction when configured. AASIST-L is available for offline evaluation. |
 | Coercion text | bangta/Scam-detection (English, Vietnamese) | review-only, published threshold 0.69 |
 | Coercion text, zero-shot | MoritzLaurer/mDeBERTa-v3-base-mnli-xnli | disabled until evaluated |
 | Learned graph | none published with a compatible schema | disabled; deterministic graph evidence used |
@@ -145,6 +155,17 @@ python backend/tools/loadtest.py --base ... --passcode ...   # latency, throughp
 The results for this build are in `docs/verification-report.md`.
 
 ## Gemini analyst workspace
+
+Open **Transaction Risk Monitor** in the Analyst workspace to review scored
+payments. New payments are assessed once at submission. The score uses the
+sandbox thresholds shown in **Risk Configuration**, and the gateway policy
+continues to determine payment disposition.
+
+**AML Monitoring** lists possible common-beneficiary patterns from settled
+transfers. A new alert requires four transfers from at least three distinct
+senders within seven days. Analysts can review a pattern and record an audited
+disposition. Existing transfers contribute to history, and earlier payments are
+not retrospectively scored.
 
 Customer money requests are simulated incoming transfers from the saved contact into
 the customer’s sandbox account. They use `POST /api/v2/payment-requests`.

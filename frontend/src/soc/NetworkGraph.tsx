@@ -4,13 +4,14 @@ import { formatDateTime, formatINR } from "../lib/format";
 import { ChartFrame, Th } from "./ui";
 
 type Transfer = { payment_id: string | null; settlement_id?: string; amount_minor: number; created_ms: number; proposed?: boolean };
-type G = { nodes: { id: string; kind: string; label: string; is_sender: boolean; is_recipient: boolean }[];
+export type RecipientGraph = { nodes: { id: string; kind: string; label: string; is_sender: boolean; is_recipient: boolean }[];
            edges: { source: string; target: string; transfers: Transfer[]; proposed: boolean }[];
            truncated: boolean; window_days: number; max_depth: number; as_of_ms: number;
-           features: { recent_distinct_other_senders: number; prior_settled_from_owner: number; inbound_settled_total: number } };
+           features: { recent_distinct_other_senders: number; prior_settled_from_owner?: number;
+             prior_settled_between_parties?: number; inbound_settled_total: number } };
 
 /** Directed recipient graph from the case's bounded, settled history. The proposed transfer is drawn separately. */
-export function NetworkGraph({ graph, evidenceId, tz }: { graph: G | null; evidenceId?: string; tz: string }) {
+export function NetworkGraph({ graph, evidenceId, tz }: { graph: RecipientGraph | null; evidenceId?: string; tz: string }) {
   const box = useRef<HTMLDivElement>(null);
   const cy = useRef<Core | null>(null);
   const [sel, setSel] = useState<string | null>(null);
@@ -80,7 +81,7 @@ export function NetworkGraph({ graph, evidenceId, tz }: { graph: G | null; evide
   const f = graph.features;
   return (
     <ChartFrame title="Recipient network"
-      description={`Settled transfers within ${graph.window_days} days, up to ${graph.max_depth} hops. Dashed amber is the transfer under review.`}
+      description={`Settled transfers within ${graph.window_days} days, up to ${graph.max_depth} hops. The dashed arrow shows the transfer under review.`}
       aside={graph.truncated ? <span className="text-xs text-soc-amber">Search depth truncated</span> : undefined}
       table={table}
       chart={
@@ -90,7 +91,7 @@ export function NetworkGraph({ graph, evidenceId, tz }: { graph: G | null; evide
           <div className="space-y-3 text-sm">
             <dl className="num grid grid-cols-[1fr_auto] gap-y-1 text-xs">
               <dt className="text-soc-muted">Other senders, 7 days</dt><dd className={f.recent_distinct_other_senders >= 3 ? "text-soc-red" : ""}>{f.recent_distinct_other_senders}</dd>
-              <dt className="text-soc-muted">Prior settled from this customer</dt><dd>{f.prior_settled_from_owner}</dd>
+              <dt className="text-soc-muted">Prior settlements between these parties</dt><dd>{f.prior_settled_between_parties ?? f.prior_settled_from_owner ?? "—"}</dd>
               <dt className="text-soc-muted">Inbound settled total</dt><dd>{f.inbound_settled_total}</dd>
             </dl>
             {allTransfers.length <= 1 && <p className="text-xs text-soc-muted">No settled history around this recipient. A new beneficiary can legitimately have none.</p>}

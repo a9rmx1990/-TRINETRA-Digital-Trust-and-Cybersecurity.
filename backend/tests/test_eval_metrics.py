@@ -22,3 +22,17 @@ def test_confusion_report_counts_both_classes_and_abstention():
     assert r["all"]["tp"] == 1 and r["all"]["fn"] == 1 and r["all"]["fp"] == 1 and r["all"]["abstain"] == 1
     assert r["all"]["recall"] == 0.5 and r["lang:kn"]["recall"] is None
     assert r["all"]["sufficient"] is True and r["lang:en"]["sufficient"] is False
+
+
+def test_voice_report_keeps_abstentions_in_full_set_rates():
+    rows = [
+        {"label": 1, "pred": True, "language": "en", "condition": "phone"},
+        {"label": 1, "pred": None, "language": "en", "condition": "phone"},
+        {"label": 0, "pred": True, "language": "en", "condition": "phone"},
+        {"label": 0, "pred": None, "language": "en", "condition": "phone"},
+    ]
+    phone = confusion_report(rows, min_n=2)["condition:phone"]
+    assert phone["synthetic_flag_rate"] == phone["genuine_flag_rate"] == 0.5
+    assert phone["synthetic_miss_rate"] == 0
+    assert phone["abstain_positive"] == phone["abstain_negative"] == 1
+    assert phone["sufficient"] is False

@@ -8,7 +8,7 @@ from __future__ import annotations
 import statistics
 from typing import Any
 
-from .. import clock
+from .. import clock, intelligence
 from ..config import settings
 from ..customer import active_restrictions, challenge_status, is_receipt_challenge, sender_account_id
 from ..db import Tx, get_db, loads
@@ -93,6 +93,11 @@ def case_file(case_id: str) -> dict:
                        " FROM payments p2 WHERE p2.counterparty_id = ? AND p2.id != ? ORDER BY p2.created_ms DESC LIMIT 25",
                        (p["owner_id"], p["counterparty_id"], p["id"]))
         settlement = t.one("SELECT id, created_ms FROM settlements WHERE payment_id = ?", (p["id"],))
+        risk = t.one("SELECT * FROM transaction_risk WHERE payment_id = ?", (p["id"],))
+        aml = t.all("""SELECT a.id, a.pattern, a.status, a.severity FROM aml_alerts a
+                      JOIN aml_alert_payments ap ON ap.alert_id = a.id
+                      WHERE ap.payment_id = ? AND a.scope = ? ORDER BY a.detected_ms DESC LIMIT 20""",
+                    (p["id"], settings.analyst_scope))
         challenge = t.one("SELECT salt, status, expires_ms, attempts, max_attempts, created_ms FROM challenges WHERE payment_id = ?"
                           " ORDER BY created_ms DESC LIMIT 1", (p["id"],))
         if challenge:
@@ -121,6 +126,8 @@ def case_file(case_id: str) -> dict:
                         "channel": p["channel"], "remark": p["remark"], "created_ms": p["created_ms"],
                         "updated_ms": p["updated_ms"], "reasons": loads(p["reasons"]), "signals": loads(p["signals"]),
                         "settlement": settlement, "challenge": challenge},
+            "risk_assessment": intelligence.assessment_view(risk) if risk else None,
+            "aml_alerts": aml,
             "customer": customer,
             "sender": customer if p["direction"] == "outgoing" else {
                 "account_id": sender_id, "account_masked": mask_ref(b["account_ref"]),

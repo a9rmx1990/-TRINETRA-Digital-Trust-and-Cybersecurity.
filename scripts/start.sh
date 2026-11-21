@@ -6,5 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 (cd "$ROOT/frontend" && { [ -d node_modules ] || npm ci; } && npm run build)
 cd "$ROOT/backend"
 export TRINETRA_FRONTEND_DIST="$ROOT/frontend/dist"
+env_args=()
+if [[ -f "$ROOT/.env" ]]; then env_args=(--env-file "$ROOT/.env"); fi
 echo "Analyst passcode: see backend/data/analyst-passcode.txt (or set TRINETRA_ANALYST_PASSCODE)"
-exec python3 -m uvicorn app.main:app --host 127.0.0.1 --port "${PORT:-8000}"
+exec python3 -m uvicorn app.main:app --host 127.0.0.1 --port "${PORT:-8000}" "${env_args[@]}"

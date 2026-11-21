@@ -83,6 +83,7 @@ def test_real_inference_execution(sample_speech_pcm):
         assert spoof_obs["status"] == "inconclusive" and spoof_obs["flagged"] is None
         assert spoof_obs["source"] == "spoof"
         assert isinstance(spoof_obs["score"], float)
+        assert spoof_obs["prediction"] == ("fake" if spoof_obs["score"] >= 0.5 else "real")
         assert len(spoof_obs["points"]) > 0
 
         # 3. Text Scam (Classification)
@@ -106,7 +107,16 @@ def test_real_inference_execution(sample_speech_pcm):
     asyncio.run(_run())
 
 
-def test_payment_flow_stores_evidence_and_soc_displays_it(sample_speech_pcm):
+@pytest.mark.parametrize("provider", ["local", "wasitai"])
+def test_payment_flow_stores_evidence_and_soc_displays_it(sample_speech_pcm, monkeypatch, provider):
+    monkeypatch.setenv("TRINETRA_ANALYST_WORKSPACE_PASSWORD", "test-analyst-password")
+    monkeypatch.setenv("TRINETRA_VOICE_PROVIDER", provider)
+    monkeypatch.setenv("WASITAI_API_KEY", "test-key")
+
+    def provider_failure(*args):
+        raise subprocess.TimeoutExpired("curl", 50)
+
+    monkeypatch.setattr("app.wasitai.detect", provider_failure)
     db_path = f"/tmp/trinetra-test-real-{uuid.uuid4().hex}.db"
     test_db = Database(f"sqlite:///{db_path}")
     test_db.migrate()
@@ -137,6 +147,10 @@ def test_payment_flow_stores_evidence_and_soc_displays_it(sample_speech_pcm):
             call_data = fin.json()
             assert call_data["usable"] is True
             assert call_data["transcript_status"] == "ok"
+            if provider == "local":
+                assert call_data["voice_prediction"] in ("real", "fake")
+            else:
+                assert call_data["voice_prediction"] is None
 
             # 3. Submit payment
             pay_r = client.post("/api/v2/payments", json={
@@ -164,13 +178,23 @@ def test_payment_flow_stores_evidence_and_soc_displays_it(sample_speech_pcm):
 
             # Confirm SOC case displays all signals and evidence
             signals = case["payment"]["signals"]
-            assert signals["voice_authenticity"]["status"] == "inconclusive"
+            expected_status = "inconclusive" if provider == "local" else "unavailable"
+            assert signals["voice_authenticity"]["status"] == expected_status
             assert signals["speech_content"]["status"] == "ok"
             assert signals["typed_remark"]["status"] == "ok"
 
             ev_map = {e["kind"]: e for e in case["evidence"]}
-            assert ev_map["voice_authenticity"]["model_id"] == "Bgeorge/deepfake-audio-detector-wav2vec2"
-            assert ev_map["voice_authenticity"]["status"] == "inconclusive"
+            assert ev_map["voice_authenticity"]["payload"]["source"] == ("spoof" if provider == "local" else "wasitai")
+            assert ev_map["voice_authenticity"]["status"] == expected_status
+            if provider == "local":
+                assert ev_map["voice_authenticity"]["model_id"] == "SpeechAntiSpoofingBenchmarks/AASIST-L"
+                assert isinstance(ev_map["voice_authenticity"]["score"], float)
+            login = client.post("/api/v2/analyst/login", json={"username": "admin", "password": "test-analyst-password"})
+            workspace = client.get(f"/api/v2/analyst/cases/{case_id}",
+                                   headers={"Authorization": f"Bearer {login.json()['token']}"})
+            assert workspace.status_code == 200
+            voice = next(e for e in workspace.json()["evidence"] if e["kind"] == "voice_authenticity")
+            assert voice["prediction"] == call_data["voice_prediction"] and voice["review_only"] is True
             assert ev_map["speech_content"]["model_id"] == "bangta/Scam-detection"
             assert ev_map["transcript"]["model_id"] == "Systran/faster-whisper-base"
             assert ev_map["transcript"]["status"] == "ok"

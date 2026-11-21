@@ -17,19 +17,22 @@ from app.db import Database  # noqa: E402
 
 ORDER = ["owners", "accounts", "counterparties", "beneficiaries", "restrictions", "calls", "payments", "settlements",
          "challenges", "cases", "evidence", "case_events", "delivery_counter", "outbox", "proposals", "watches",
-         "adjudications", "tool_audit", "command_results", "analyst_workspace_runs", "schema_meta"]
-KEYS = {"case_events": "seq", "delivery_counter": "id", "command_results": "command_key", "schema_meta": "k"}
+         "adjudications", "tool_audit", "command_results", "analyst_workspace_runs",
+         "transaction_risk", "aml_alerts", "aml_alert_payments", "aml_reviews", "schema_meta"]
+KEYS = {"case_events": "seq", "delivery_counter": "id", "command_results": "command_key", "schema_meta": "k",
+        "transaction_risk": "payment_id"}
+ADDED_TABLES = {"analyst_workspace_runs", "transaction_risk", "aml_alerts", "aml_alert_payments", "aml_reviews"}
 
 
-def has_analyst_runs(db: Database) -> bool:
+def has_table(db: Database, table: str) -> bool:
     return db.dialect != "sqlite" or bool(db.read(lambda t: t.scalar(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'analyst_workspace_runs'"
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
     )))
 
 
 def copy(src: Database, dst: Database) -> None:
     for table in ORDER:
-        if table == "analyst_workspace_runs" and not has_analyst_runs(src):
+        if table in ADDED_TABLES and not has_table(src, table):
             continue
         rows = src.read(lambda t: t.all(f"SELECT * FROM {table}"))
         if not rows:
@@ -50,13 +53,13 @@ def copy(src: Database, dst: Database) -> None:
 
 
 def fingerprint(db: Database) -> dict:
-    analyst_runs = has_analyst_runs(db)
+    absent = {table for table in ADDED_TABLES if not has_table(db, table)}
 
     def _go(t):
         out = {}
         for table in ORDER:
             key = KEYS.get(table, "id")
-            ids = [] if table == "analyst_workspace_runs" and not analyst_runs else [
+            ids = [] if table in absent else [
                 str(r[key]) for r in t.all(f"SELECT {key} FROM {table} ORDER BY {key}")
             ]
             out[f"{table}.count"] = len(ids)

@@ -39,12 +39,18 @@ def main(keys: list[str]) -> None:
             continue
         info = api.model_info(e["model_id"], revision=e.get("revision") or "main")
         target = MODELS / e["path"]
-        snapshot_download(e["model_id"], revision=info.sha, local_dir=target)
+        allow_patterns = None
+        if e["kind"] == "aasist_l_onnx":
+            allow_patterns = [e["checksum_file"], "LICENSE"]
+        snapshot_download(e["model_id"], revision=info.sha, local_dir=target, allow_patterns=allow_patterns)
         f = target / e["checksum_file"]
         if not f.exists():
             raise SystemExit(f"{key}: expected {f.name} in snapshot; update checksum_file in manifest")
         e["revision"] = info.sha
-        e["sha256"] = sha256_file(f)
+        digest = sha256_file(f)
+        if e["kind"] == "aasist_l_onnx" and e.get("sha256") != digest:
+            raise SystemExit(f"{key}: checkpoint SHA-256 differs from the release pin")
+        e["sha256"] = digest
         print(f"pinned {key}: {e['model_id']}@{info.sha[:12]} sha256={e['sha256'][:12]}")
     mf.write_text(json.dumps(data, indent=2) + "\n")
 

@@ -4,7 +4,7 @@ Copy this prompt into an agent running on a machine with internet access:
 Work in the TRINETRA repository. Install and integrate the three models currently enabled in backend/models/manifest.json:
 
 1. asr — Systran/faster-whisper-base
-2. spoof — Bgeorge/deepfake-audio-detector-wav2vec2
+2. spoof — SpeechAntiSpoofingBenchmarks/AASIST-L
 3. text_scam — bangta/Scam-detection
 
 Use Python 3.12 or 3.13. Install backend/requirements.txt and backend/requirements-models.txt in a project virtual environment. Use backend/tools/fetch_models.py to download the checkpoints into backend/models, pin their resolved revisions, and record their SHA-256 checksums in the manifest. If a checkpoint's actual files or labels differ from what the adapter expects, make the smallest necessary code or manifest correction and explain it.

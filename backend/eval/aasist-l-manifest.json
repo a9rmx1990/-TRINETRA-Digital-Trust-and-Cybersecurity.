@@ -1,0 +1,20 @@
+{
+  "models": {
+    "spoof": {
+      "signal": "voice_authenticity",
+      "kind": "aasist_l_onnx",
+      "enabled": true,
+      "path": ".",
+      "model_id": "SpeechAntiSpoofingBenchmarks/AASIST-L",
+      "revision": "357e022c44a1aa926097e18c1457bde3873ed8bf",
+      "license": "MIT",
+      "positive_label": "spoof",
+      "threshold": 0.5,
+      "clear_below": 0.4,
+      "label_mapping_verified": true,
+      "enforce": false,
+      "checksum_file": "aasist-l.onnx",
+      "sha256": "f43f0a638b52846f5d0e630c0a738d10e9306325945127c6f8662d559585f218"
+    }
+  }
+}

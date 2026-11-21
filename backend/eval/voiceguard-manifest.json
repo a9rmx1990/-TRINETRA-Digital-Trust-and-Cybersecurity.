@@ -1,0 +1,19 @@
+{
+  "models": {
+    "spoof": {
+      "signal": "voice_authenticity",
+      "kind": "voiceguard_onnx",
+      "enabled": true,
+      "path": ".",
+      "model_id": "Hashim-Bhagad/voiceguard-xlsr-aasist-indic",
+      "revision": "fcd0f9e1161229627dd8a500ccfe25c74bb93b55",
+      "license": "CC BY-NC 4.0",
+      "positive_label": "spoof",
+      "threshold": 0.05393,
+      "label_mapping_verified": true,
+      "enforce": false,
+      "checksum_file": "model.onnx",
+      "sha256": "3876af79f62bcdfa8cd48d02cb57a7df4637dbb9f033596b42cfc6dbc859e3eb"
+    }
+  }
+}

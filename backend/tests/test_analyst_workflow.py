@@ -34,6 +34,10 @@ def test_workflow_retries_only_the_interrupted_stages(gemini_transport):
         context = json.loads(payload["contents"][0]["parts"][0]["text"])
         completed = list(context["prior_findings"])
         stage = list(workflow.ROLES)[len(completed)]
+        case = context["case"]
+        assert ("recent_payment_states" in case) == (stage == "triage")
+        assert ("similar_case_verdicts" in case) == (stage == "investigator")
+        assert ("model_id" in case["evidence"][0]) == (stage not in ("triage", "monitor"))
         first_attempt = stage not in calls
         calls.append(stage)
         if stage == "investigator" and first_attempt:
@@ -46,7 +50,12 @@ def test_workflow_retries_only_the_interrupted_stages(gemini_transport):
         })
 
     gemini_transport(respond)
-    result = asyncio.run(workflow.analyze({"evidence": []}, uuid4(), workflow.model_name(), "test-key"))
+    facts = {
+        "evidence": [{"ref": "E1", "kind": "recipient_graph", "status": "ok", "model_id": "graph"}],
+        "recent_payment_states": ["SETTLED"],
+        "similar_case_verdicts": ["fraud"],
+    }
+    result = asyncio.run(workflow.analyze(facts, uuid4(), workflow.model_name(), "test-key"))
 
     assert list(result) == list(workflow.ROLES)
     assert calls == ["triage", "investigator", "investigator", "decision", "monitor", "monitor", "reporter"]

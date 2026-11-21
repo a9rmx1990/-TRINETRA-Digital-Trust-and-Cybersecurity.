@@ -379,7 +379,8 @@ def test_verdict_override_keeps_immutable_trail_and_feeds_quality(h):
     assert graph_row["tn"] == 1 and graph_row["n"] == 1
 
 
-def test_watch_reopens_case_on_new_evidence(h, fake_clock):
+def test_watch_reopens_case_on_new_evidence(h, fake_clock, monkeypatch):
+    monkeypatch.setenv("TRINETRA_ANALYST_WORKSPACE_PASSWORD", "test-analyst-password")
     a = h.analyst()
     ref = "WATCH0001234"
     s = h.session()
@@ -413,6 +414,13 @@ def test_watch_reopens_case_on_new_evidence(h, fake_clock):
     assert case["case"]["state"] == "open"
     assert case["payment"]["state"] == "REJECTED"  # transfer stays terminal
     assert "watch_alert" in [e["type"] for e in case["timeline"]]
+    login = h.c.post("/api/v2/analyst/login", json={"username": "admin", "password": "test-analyst-password"})
+    detail = h.c.get(f"/api/v2/analyst/cases/{cid}", headers={"Authorization": f"Bearer {login.json()['token']}"})
+    assert detail.status_code == 200
+    watch = detail.json()["watch"]
+    assert watch["checks"] == 1
+    assert watch["last_result"]["new_inbound"] == 1
+    assert watch["reopened_on_last_check"] is True
 
 
 def test_chart_bucket_reconciles_to_sql(h):

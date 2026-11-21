@@ -25,6 +25,19 @@ def test_mask_ref():
     assert mask_ref("HDFC00012345") == "•••• 2345"
 
 
+def test_analyst_labels_legacy_diagnostic_scores_from_the_same_checkpoint():
+    from app.analyst.api import _workspace_evidence
+
+    item = {"kind": "voice_authenticity", "status": "inconclusive", "score": 0.9994,
+            "model_id": "SpeechAntiSpoofingBenchmarks/AASIST-L",
+            "revision": "357e022c44a1aa926097e18c1457bde3873ed8bf",
+            "payload": {"reason": "detector enabled for diagnostics only"}}
+    assert _workspace_evidence(item)["prediction"] == "fake"
+    assert _workspace_evidence({**item, "score": 0.3})["prediction"] == "real"
+    assert _workspace_evidence({**item, "revision": "older"})["prediction"] is None
+    assert "payload" not in _workspace_evidence(item)
+
+
 def test_capture_quality_detects_speech_and_silence():
     v = measure_capture(np.frombuffer(voiced_pcm(), dtype="<i2"))
     assert v.usable and v.voiced_ms >= 800 and v.duration_ms == 3000

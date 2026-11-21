@@ -55,7 +55,7 @@ export type Analytics = {
 export type BucketRows = { items: { id: string; decision: string; state: string; amount_minor: number; amount_display: string;
   channel: string; created_ms: number; case_id: string | null }[]; watermark: Watermark };
 export type ModelInfo = { models: { key: string; signal: string; model_id: string; revision: string; license: string;
-  languages: string[]; enforce: boolean; status: string; reason: string; threshold: number }[]; policy_version: string };
+  languages: string[]; enforce: boolean; status: string; reason: string; threshold: number | null }[]; policy_version: string };
 
 const tok = store<{ token: string; name: string }>("trinetra.soc.session");
 export const socSession = { get: () => tok.get(), set: (v: { token: string; name: string } | null) => tok.set(v) };

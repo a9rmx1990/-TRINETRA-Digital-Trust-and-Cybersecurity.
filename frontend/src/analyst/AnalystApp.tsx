@@ -1,11 +1,15 @@
 import { ArrowLeft, ArrowRight, Check, ChevronRight, RefreshCw } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { lazy, Suspense, useEffect, useState, type FormEvent } from "react";
 import { ApiError, request } from "../lib/api";
+import { useLocation } from "../lib/router";
 import type { CaseFile, Queue } from "../soc/api";
+import type { InvestigatorData } from "./InvestigatorEvidence";
+import { readable, RiskEvidence, TransactionIntelligence, type AlertLink, type Assessment } from "./TransactionIntelligence";
 import "./analyst.css";
 
 const endpoint = "/api/v2/analyst";
 const sessionKey = "trinetra.analyst.workspace";
+const InvestigatorEvidence = lazy(() => import("./InvestigatorEvidence").then(m => ({ default: m.InvestigatorEvidence })));
 const roles = [
   { id: "triage", name: "Triage" },
   { id: "investigator", name: "Investigator" },
@@ -13,16 +17,30 @@ const roles = [
   { id: "monitor", name: "Monitor" },
   { id: "reporter", name: "Reporter" },
 ] as const;
+const screeningSignals = [
+  ["voice_authenticity", "Voice authenticity"],
+  ["speech_content", "Spoken content"],
+  ["typed_remark", "Typed remark"],
+  ["recipient_graph", "Recipient graph"],
+] as const;
 
 type Finding = { summary: string; confidence: string; evidence_refs: string[]; next_step: string };
 type Analysis = { id: string; case_version: number; model: string; findings: Record<string, Finding>;
   created_ms: number; traced: number; disposition: string | null; note: string | null };
-type Detail = Pick<CaseFile, "case" | "beneficiary" | "watch" | "linked_transactions"> & {
+type Detail = Pick<CaseFile, "case" | "beneficiary" | "linked_transactions"> & {
   customer: CaseFile["sender"];
   payment: CaseFile["payment"] & { direction: "incoming" | "outgoing" };
   suspicion_level: "low" | "elevated" | "high" | "inconclusive";
   timeline: Pick<CaseFile["timeline"][number], "id" | "type" | "actor" | "created_ms">[];
-  evidence: Omit<CaseFile["evidence"][number], "payload">[]; run: Analysis | null;
+  evidence: (Omit<CaseFile["evidence"][number], "payload"> & { prediction?: "real" | "fake" | "uncertain" | null })[];
+  investigator?: InvestigatorData;
+  risk_assessment: Assessment | null;
+  aml_alerts: AlertLink[];
+  watch: (Omit<NonNullable<CaseFile["watch"]>, "last_result"> & {
+    last_result: { checked_ms: number; new_inbound: number } | null;
+    reopened_on_last_check?: boolean;
+  }) | null;
+  run: Analysis | null;
   verification: { available: boolean; delivered_until_ms: number | null; verified_run_id: string | null };
 };
 type Status = { model: string; tracing: boolean; unavailable_reason: string | null };
@@ -36,6 +54,10 @@ const message = (e: unknown) => e instanceof Error ? e.message : "Something went
 
 export function AnalystApp() {
   const [token, setToken] = useState(() => sessionStorage.getItem(sessionKey));
+  const { search } = useLocation();
+  const params = new URLSearchParams(search);
+  const page = params.get("intelligence");
+  const alertId = params.get("alert");
   function session(value: string | null) {
     if (value) sessionStorage.setItem(sessionKey, value);
     else sessionStorage.removeItem(sessionKey);
@@ -46,7 +68,15 @@ export function AnalystApp() {
       <div className="aw-brand"><span className="workspace-brand">Trinetra</span><span>Analyst workspace</span></div>
       {token && <button className="aw-button aw-quiet" onClick={() => session(null)}>Sign out</button>}
     </header>
-    {token ? <Workspace token={token} signOut={() => session(null)} /> : <Login onLogin={session} />}
+    {token && <nav className="aw-intel-nav" aria-label="Transaction Intelligence">
+      <a href="/analyst" aria-current={!page ? "page" : undefined}>Case investigations</a>
+      <a href="/analyst?intelligence=risk" aria-current={page === "risk" ? "page" : undefined}>Transaction Risk Monitor</a>
+      <a href="/analyst?intelligence=aml" aria-current={page === "aml" ? "page" : undefined}>AML Monitoring</a>
+      <a href="/analyst?intelligence=config" aria-current={page === "config" ? "page" : undefined}>Risk Configuration</a>
+    </nav>}
+    {!token ? <Login onLogin={session} /> : page === "risk" || page === "aml" || page === "config"
+      ? <TransactionIntelligence key={page + (alertId ?? "")} token={token} page={page} alertId={alertId} onAuthFailure={() => session(null)} />
+      : <Workspace token={token} signOut={() => session(null)} />}
   </div>;
 }
 
@@ -227,6 +257,7 @@ function CasePanel({ detail, status, operation, submit }: {
 }) {
   const { run, payment, customer, beneficiary, evidence, timeline, verification, watch } = detail;
   const incoming = payment.direction === "incoming";
+  const screeningReasons = payment.reasons.filter(reason => reason.code !== "voice_inconclusive");
   const stale = !!run && run.case_version !== detail.case.version;
   const verified = verification.verified_run_id !== null;
   const usedForVerification = verified && verification.verified_run_id === run?.id;
@@ -246,16 +277,38 @@ function CasePanel({ detail, status, operation, submit }: {
         <div><dt>Monitoring</dt><dd>{watch ? label(watch.status) : "No active watch"}<small>{watch ? `${watch.checks} checks` : `${detail.linked_transactions.length} related transfers`}</small></dd></div>
       </dl>
     </article>
-    <article className="aw-card aw-record">
+    <article className="aw-card aw-record" aria-labelledby="case-screening-heading">
       <div className="aw-section-title">
-        <h2>Screening</h2>
+        <h2 id="case-screening-heading">Screening</h2>
         <span className="aw-chip" data-tone={detail.suspicion_level === "elevated" ? "medium" : detail.suspicion_level}>
-          {detail.suspicion_level} suspicion
+          {detail.suspicion_level === "inconclusive" ? "Limited evidence" : `${detail.suspicion_level} suspicion`}
         </span>
       </div>
-      <ul className="list-disc space-y-1 pl-5 text-sm text-muted">
-        {payment.reasons.map(reason => <li key={reason.code}>{reason.text}</li>)}
+      <ul className="aw-signals" aria-label="Screening signals">
+        {screeningSignals.map(([kind, name]) => {
+          const index = evidence.findIndex(item => item.kind === kind);
+          const item = evidence[index];
+          const diagnostic = kind === "voice_authenticity" && item?.model_id === "SpeechAntiSpoofingBenchmarks/AASIST-L";
+          return <li className="aw-record-row" key={kind}>
+            <div>
+              {item ? <a href={`#aw-evidence-E${index + 1}`}><strong>{name}</strong></a> : <strong>{name}</strong>}
+              {item?.prediction && <small>Voice prediction · {label(item.prediction)}</small>}
+              {diagnostic && item.score !== null && <small>AASIST-L diagnostic score · {item.score}</small>}
+            </div>
+            <div className="aw-chips">
+              <span className="aw-chip" data-tone={item?.flagged ? "medium" : undefined}>{label(item?.status ?? "unavailable")}</span>
+              {item?.review_only && <span className="aw-chip">Review only</span>}
+            </div>
+          </li>;
+        })}
       </ul>
+      {screeningReasons.length > 0 ? (
+        <ul className="list-disc space-y-1 pl-5 text-sm text-muted">
+          {screeningReasons.map(reason => <li key={reason.code}>{reason.text}</li>)}
+        </ul>
+      ) : payment.state === "VERIFICATION_REQUIRED" ? (
+        <p className="aw-muted">Additional verification required.</p>
+      ) : null}
     </article>
     {!incoming && payment.state === "VERIFICATION_REQUIRED" && <article className="aw-card aw-record">
       <h2>Transfer verification</h2>
@@ -279,14 +332,28 @@ function CasePanel({ detail, status, operation, submit }: {
       <div className="aw-section-title"><div><p className="aw-kicker">Gemini analysis</p><h2>Agent findings</h2></div>
         {(!run || stale) && !usedForVerification && <button className="aw-button aw-primary" disabled={busy || !status || !!status.unavailable_reason}
           onClick={() => submit({ kind: "analysis" })}>{operation === "analysis" ? "Analyzing…" : "Run analysis"}</button>}</div>
-      <div className="aw-roles" aria-label="Agent findings">
-        {roles.map(({ id, name }) => <button key={id} className="aw-role" aria-pressed={role === id}
-          onClick={() => setRole(id)}>{name}{run?.findings[id] && <Check size={13} role="img" aria-label="Complete" />}</button>)}
-      </div>
+      <ol className="aw-roles" aria-label="Analysis stages">
+        {roles.map(({ id, name }) => <li key={id}><button className="aw-role" aria-pressed={role === id}
+          aria-controls="aw-stage-finding" onClick={() => setRole(id)}>
+          {name}{run?.findings[id] && <Check size={13} role="img" aria-label="Complete" />}
+        </button></li>)}
+      </ol>
       {operation === "analysis" && <p className="aw-muted" role="status">Running the five agent stages…</p>}
       {operation === "review" && <p className="aw-muted" role="status">Saving review…</p>}
       {status?.unavailable_reason && <p className="aw-muted">{status.unavailable_reason}</p>}
       {stale && !usedForVerification && <p className="aw-warning" role="status">The case changed after this analysis. Evidence links and review are available for current runs.</p>}
+      <div id="aw-stage-finding">
+      {role === "monitor" && <>
+        <WatchStatus watch={watch} incoming={incoming} />
+        {!!detail.aml_alerts?.length && <section className="aw-watch" aria-label="Linked AML alerts">
+          <h3>Linked AML alerts</h3>
+          <ul>{detail.aml_alerts.map(alert => <li key={alert.id}>
+            <a className="aw-intel-link" href={`/analyst?intelligence=aml&alert=${encodeURIComponent(alert.id)}`}>
+              {readable(alert.pattern)} · {readable(alert.status)}
+            </a>
+          </li>)}</ul>
+        </section>}
+      </>}
       {finding ? <div className="aw-finding">
         <div className="aw-section-title"><h3>{roles.find(item => item.id === role)?.name}</h3>
           <span className="aw-chip">{finding.confidence} confidence</span></div>
@@ -294,6 +361,12 @@ function CasePanel({ detail, status, operation, submit }: {
         {!!finding.evidence_refs.length && <div className="aw-chips">{finding.evidence_refs.map(ref => stale
           ? <span className="aw-chip" key={ref}>{ref}</span> : <a className="aw-chip" key={ref} href={"#aw-evidence-" + ref}>{ref}</a>)}</div>}
       </div> : <p className="aw-muted">Run the workflow to generate findings for this case.</p>}
+      {role === "investigator" && detail.risk_assessment && <RiskEvidence assessment={detail.risk_assessment} />}
+      {role === "investigator" && <Suspense fallback={<p role="status">Loading visualizations…</p>}>
+        <InvestigatorEvidence data={detail.investigator} diagnostic={evidence.some(item =>
+          item.kind === "voice_authenticity" && item.model_id === "SpeechAntiSpoofingBenchmarks/AASIST-L")} />
+      </Suspense>}
+      </div>
       {run && <p className="aw-run-meta aw-muted">{run.model} · {date(run.created_ms)}{run.traced ? ` · LangSmith run ${run.id}` : ""}</p>}
       {incoming && (verified || payment.state === "VERIFICATION_REQUIRED") && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
@@ -325,9 +398,13 @@ function CasePanel({ detail, status, operation, submit }: {
         {!evidence.length && <p className="aw-muted">No evidence is attached.</p>}
         {evidence.map((item, index) => <div className="aw-record-row" id={`aw-evidence-E${index + 1}`} key={item.id}>
           <div><strong>{label(item.kind)}</strong><small>E{index + 1} · {label(item.source)}{item.review_only ? " · review only" : ""}</small>
+            {item.prediction && <small>Voice model prediction</small>}
+            {item.model_id && <small>{item.model_id}</small>}
             {item.score !== null && item.score_scale && <small>{item.score} · {item.score_scale}</small>}
           </div>
-          <span className="aw-chip" data-tone={item.flagged ? (item.review_only ? "medium" : "high") : undefined}>{label(item.status)}</span>
+          <span className="aw-chip" data-tone={item.prediction === "fake" || item.flagged ? (item.review_only ? "medium" : "high") : undefined}>
+            {label(item.prediction ?? item.status)}
+          </span>
         </div>)}
       </article>
       <article className="aw-card aw-record">
@@ -339,4 +416,35 @@ function CasePanel({ detail, status, operation, submit }: {
       </article>
     </div>
   </>;
+}
+
+function WatchStatus({ watch, incoming }: { watch: Detail["watch"]; incoming: boolean }) {
+  const active = watch?.status === "active";
+  const last = watch?.last_result;
+  return <section className="aw-watch" aria-labelledby="aw-watch-title">
+    <div className="aw-section-title">
+      <h3 id="aw-watch-title">Watch status</h3>
+      <span className="aw-chip" data-tone={active ? "low" : undefined}>
+        {active ? "Active" : watch?.status === "done" ? "Completed" : "No watch scheduled"}
+      </span>
+    </div>
+    {watch && <>
+      <p className="aw-muted">{incoming ? "Tracks new settled transfers to the receiving account from other senders."
+        : "Tracks new settled transfers to this recipient from other customers."}</p>
+      <dl className="aw-facts">
+        <div><dt>Next check</dt><dd>{active ? date(watch.next_due_ms) : "None scheduled"}</dd></div>
+        <div><dt>Watch end</dt><dd>{date(watch.horizon_ms)}</dd></div>
+        <div><dt>Checks completed</dt><dd>{watch.checks}</dd></div>
+      </dl>
+      <div className="aw-watch-result">
+        <h4>Last check</h4>
+        {last ? <>
+          <p>{date(last.checked_ms)} · {last.new_inbound
+            ? `${last.new_inbound} new incoming ${last.new_inbound === 1 ? "transfer" : "transfers"}`
+            : "No new incoming transfers"}</p>
+          {watch.reopened_on_last_check && <p className="aw-warning">Case reopened after this check.</p>}
+        </> : <p className="aw-muted">No checks completed yet.</p>}
+      </div>
+    </>}
+  </section>;
 }

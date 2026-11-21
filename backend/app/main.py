@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import auth
-from .analyst.api import router as analyst_router
+from .analyst.intelligence_api import router as analyst_router
 from .api import health, router, soc
 from .config import settings
 from .db import get_db

@@ -20,7 +20,7 @@ from typing import Any, Callable, Iterable, TypeVar
 
 T = TypeVar("T")
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS beneficiaries (
   UNIQUE (owner_id, account_ref)
 );
 CREATE INDEX IF NOT EXISTS ix_benef_owner ON beneficiaries(owner_id, created_ms);
+CREATE INDEX IF NOT EXISTS ix_counterparty_sandbox ON counterparties(sandbox_account_id);
 
 CREATE TABLE IF NOT EXISTS restrictions (
   id TEXT PRIMARY KEY,
@@ -136,6 +137,54 @@ CREATE TABLE IF NOT EXISTS settlements (
 );
 CREATE INDEX IF NOT EXISTS ix_settle_cp ON settlements(counterparty_id, created_ms);
 CREATE INDEX IF NOT EXISTS ix_settle_account ON settlements(account_id, created_ms);
+CREATE INDEX IF NOT EXISTS ix_pay_account_direction_time ON payments(account_id, direction, created_ms);
+
+CREATE TABLE IF NOT EXISTS transaction_risk (
+    payment_id TEXT PRIMARY KEY REFERENCES payments(id),
+    assessed_ms BIGINT NOT NULL,
+    config_version TEXT NOT NULL,
+    score INTEGER NOT NULL CHECK (score BETWEEN 0 AND 100),
+    band TEXT NOT NULL,
+    alert INTEGER NOT NULL CHECK (alert IN (0, 1)),
+    findings TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_risk_band_time ON transaction_risk(band, assessed_ms);
+CREATE INDEX IF NOT EXISTS ix_risk_time ON transaction_risk(assessed_ms);
+
+CREATE TABLE IF NOT EXISTS aml_alerts (
+    id TEXT PRIMARY KEY,
+    pattern TEXT NOT NULL,
+    recipient_key TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    status TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    detected_ms BIGINT NOT NULL,
+    window_start_ms BIGINT NOT NULL,
+    window_end_ms BIGINT NOT NULL,
+    updated_ms BIGINT NOT NULL,
+    config_version TEXT NOT NULL,
+    evidence TEXT NOT NULL,
+    UNIQUE (scope, pattern, recipient_key, window_end_ms)
+);
+CREATE INDEX IF NOT EXISTS ix_aml_recipient_window ON aml_alerts(scope, pattern, recipient_key, window_end_ms);
+CREATE INDEX IF NOT EXISTS ix_aml_status_time ON aml_alerts(scope, status, detected_ms);
+CREATE TABLE IF NOT EXISTS aml_alert_payments (
+    id TEXT PRIMARY KEY,
+    alert_id TEXT NOT NULL REFERENCES aml_alerts(id),
+    payment_id TEXT NOT NULL REFERENCES payments(id),
+    UNIQUE (alert_id, payment_id)
+);
+CREATE INDEX IF NOT EXISTS ix_aml_payment ON aml_alert_payments(payment_id);
+
+CREATE TABLE IF NOT EXISTS aml_reviews (
+    id TEXT PRIMARY KEY,
+    alert_id TEXT NOT NULL REFERENCES aml_alerts(id),
+    actor TEXT NOT NULL,
+    prev_status TEXT NOT NULL,
+    new_status TEXT NOT NULL,
+    note TEXT NOT NULL,
+    created_ms BIGINT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS challenges (
   id TEXT PRIMARY KEY,
@@ -548,7 +597,8 @@ class Database:
 
     def reset_all(self) -> None:
         """Test helper: wipe every table."""
-        tables = ["command_results", "tool_audit", "adjudications", "watches", "proposals", "outbox",
+        tables = ["aml_reviews", "aml_alert_payments", "aml_alerts", "transaction_risk", "analyst_workspace_runs",
+                  "command_results", "tool_audit", "adjudications", "watches", "proposals", "outbox",
                   "case_events", "evidence", "challenges", "settlements", "cases", "payments", "calls",
                   "restrictions", "beneficiaries", "counterparties", "accounts", "owners"]
         def _wipe(t: Tx):

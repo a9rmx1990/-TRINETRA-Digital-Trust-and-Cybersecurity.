@@ -14,7 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from .. import clock, policy
 from ..config import settings
 from ..db import dumps, get_db, loads
-from ..soc import actions, views
+from ..soc import actions, mcp, views
 from ..util import ApiError, const_eq, hmac_hex
 from . import workflow
 
@@ -26,6 +26,16 @@ running_cases: set[str] = set()
 class Credentials(BaseModel):
     username: str = Field(max_length=64)
     password: str = Field(max_length=256)
+
+
+def analysis_facts(case: dict) -> dict:
+    facts = workflow.case_facts(case)
+    args = {"case_id": case["case"]["id"]}
+    history = mcp.call_tool("triage", "case.history", args, actor="analyst-workspace")
+    similar = mcp.call_tool("investigator", "cases.similar_closed", args, actor="analyst-workspace")
+    facts["recent_payment_states"] = [row["state"] for row in history]
+    facts["similar_case_verdicts"] = [row["verdict"] for row in similar]
+    return facts
 
 
 class Review(BaseModel):
@@ -100,18 +110,63 @@ def latest_run(case_id: str) -> dict | None:
     return row
 
 
+def _workspace_evidence(item: dict) -> dict:
+    result = {key: value for key, value in item.items() if key != "payload"}
+    if item["kind"] == "voice_authenticity":
+        prediction = item["payload"].get("prediction")
+        score = item["score"]
+        # Older diagnostic records from this checkpoint stored the score before the label was added.
+        if (prediction is None and item["status"] == "inconclusive"
+                and item["model_id"] == "SpeechAntiSpoofingBenchmarks/AASIST-L"
+                and item["revision"] == "357e022c44a1aa926097e18c1457bde3873ed8bf"
+                and item["payload"].get("reason") == "detector enabled for diagnostics only"
+                and score is not None and 0 <= score <= 1):
+            prediction = "fake" if score >= 0.5 else "real"
+        result["prediction"] = prediction
+    return result
+
+
+def _investigator_evidence(items: list[dict]) -> dict:
+    by_kind = {item["kind"]: item["payload"] for item in items}
+    quality = by_kind.get("capture_quality", {})
+    voice = by_kind.get("voice_authenticity", {})
+    return {
+        "graph": by_kind.get("recipient_graph_snapshot"),
+        "capture": {key: quality[key] for key in (
+            "duration_ms", "voiced_ms", "rms_dbfs", "clipped_ratio", "frame_ms", "levels_dbfs",
+        ) if key in quality} if quality else None,
+        "voice_windows": [
+            {key: point[key] for key in ("offset_ms", "window_ms", "score")}
+            for point in voice.get("points") or []
+            if all(type(point.get(key)) in (int, float) for key in ("offset_ms", "window_ms", "score"))
+        ],
+    }
+
+
 @router.get("/cases/{case_id}", dependencies=[Depends(require_session)])
 def detail(case_id: str):
     case = views.case_file(case_id)
     challenge = case["payment"]["challenge"]
+    watch = case["watch"]
+    if watch:
+        last_check = next((event for event in reversed(case["timeline"])
+                           if event["type"] in ("watch_checked", "watch_alert")), None)
+        watch = {**watch, "reopened_on_last_check": (
+            last_check is not None and last_check["type"] == "watch_alert"
+            and last_check["prev_state"] in ("closed", "monitoring")
+            and last_check["new_state"] == "open"
+        )}
     verified_run = next((e["data"]["params"]["analysis_run_id"] for e in reversed(case["timeline"])
                          if e["type"] == "action_verify_incoming"), None)
     eligible = {item["action"] for item in case["eligible_actions"]}
     return {
-        **{key: case[key] for key in ("case", "customer", "sender", "beneficiary", "watch", "linked_transactions")},
+        **{key: case[key] for key in ("case", "customer", "sender", "beneficiary", "linked_transactions",
+                                     "risk_assessment", "aml_alerts")},
+        "watch": watch,
         "payment": {k: v for k, v in case["payment"].items() if k != "remark"},
         "suspicion_level": policy.suspicion_level(case["payment"]["decision"], case["payment"]["reasons"]),
-        "evidence": [{k: v for k, v in e.items() if k != "payload"} for e in case["evidence"]],
+        "evidence": [_workspace_evidence(item) for item in case["evidence"]],
+        "investigator": _investigator_evidence(case["evidence"]),
         "timeline": [{k: e[k] for k in ("id", "type", "actor", "created_ms")} for e in case["timeline"][-40:]],
         "verification": {
             "available": bool({"issue_challenge", "verify_incoming"} & eligible),
@@ -156,7 +211,8 @@ async def run_analysis(case_id: str):
     running_cases.add(case_id)
     try:
         async with run_slots, asyncio.timeout(70):
-            findings = await workflow.analyze(workflow.case_facts(case), run_id, readiness["model"], key)
+            facts = await run_in_threadpool(analysis_facts, case)
+            findings = await workflow.analyze(facts, run_id, readiness["model"], key)
             await run_in_threadpool(get_db().write, lambda t: t.execute(
                 """INSERT INTO analyst_workspace_runs (id, case_id, case_version, model, findings, created_ms, traced)
                    VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (case_id, case_version) DO NOTHING""",

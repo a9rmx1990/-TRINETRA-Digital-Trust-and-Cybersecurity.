@@ -22,6 +22,7 @@ import csv
 import json
 import math
 import sys
+from time import perf_counter
 import wave
 from collections import defaultdict
 from pathlib import Path
@@ -60,12 +61,18 @@ def load_wav(path: Path) -> np.ndarray:
 
 
 def confusion_report(rows: list[dict], min_n: int) -> dict:
-    groups: dict[str, dict] = defaultdict(lambda: {"tp": 0, "fp": 0, "tn": 0, "fn": 0, "abstain": 0})
+    groups: dict[str, dict] = defaultdict(lambda: {
+        "tp": 0, "fp": 0, "tn": 0, "fn": 0, "abstain": 0, "abstain_positive": 0, "abstain_negative": 0,
+    })
     for r in rows:
-        for g in ("all", f"lang:{r['language']}"):
+        keys = ["all", f"lang:{r['language']}"]
+        if r.get("condition"):
+            keys.append(f"condition:{r['condition']}")
+        for g in keys:
             c = groups[g]
             if r["pred"] is None:
                 c["abstain"] += 1
+                c["abstain_positive" if r["label"] == 1 else "abstain_negative"] += 1
             elif r["label"] == 1:
                 c["tp" if r["pred"] else "fn"] += 1
             else:
@@ -73,7 +80,12 @@ def confusion_report(rows: list[dict], min_n: int) -> dict:
     out = {}
     for g, c in sorted(groups.items()):
         pos, neg = c["tp"] + c["fn"], c["tn"] + c["fp"]
+        total_pos, total_neg = pos + c["abstain_positive"], neg + c["abstain_negative"]
         out[g] = {**c, "positives": pos, "negatives": neg,
+                  "total_positives": total_pos, "total_negatives": total_neg,
+                  "synthetic_flag_rate": None if not total_pos else round(c["tp"] / total_pos, 4),
+                  "genuine_flag_rate": None if not total_neg else round(c["fp"] / total_neg, 4),
+                  "synthetic_miss_rate": None if not total_pos else round(c["fn"] / total_pos, 4),
                   "recall": None if not pos else round(c["tp"] / pos, 4), "recall_ci95": wilson(c["tp"], pos),
                   "false_positive_rate": None if not neg else round(c["fp"] / neg, 4), "fpr_ci95": wilson(c["fp"], neg),
                   "precision": None if not (c["tp"] + c["fp"]) else round(c["tp"] / (c["tp"] + c["fp"]), 4),
@@ -82,26 +94,52 @@ def confusion_report(rows: list[dict], min_n: int) -> dict:
     return out
 
 
-async def classify(args) -> dict:
-    from app.inference import Manifest, Runtime
+async def classify(args, model_dir: Path | None = None) -> dict:
+    from app.inference import Manifest, Runtime, measure_capture
     from app.config import settings
-    rt = Runtime(Manifest.load(settings.model_dir))
+    directory = model_dir if model_dir is not None else settings.model_dir
+    rt = Runtime(Manifest.load(directory), model_dir=directory)
     e = rt.manifest.get(args.signal)
     if not e or e.status != "available":
         return {"status": "not_run", "reason": f"{args.signal}: {e.status_reason if e else 'not in manifest'}"}
     rows = []
+    latencies = []
     with open(Path(args.data) / "labels.csv") as f:
         for r in csv.DictReader(f):
             if r["split"] != args.split:
                 continue
             if args.signal == "spoof":
-                obs = await rt.spoof(load_wav(Path(args.data) / r["path_or_text"]))
+                pcm = load_wav(Path(args.data) / r["path_or_text"])
+                if measure_capture(pcm).usable:
+                    start = perf_counter()
+                    obs = await rt.spoof(pcm)
+                    latencies.append((perf_counter() - start) * 1000)
+                else:
+                    obs = {"status": "inconclusive"}
             else:
                 obs = await rt.classify_text("eval", r["path_or_text"], r["language"])
             pred = None if obs["status"] in ("unavailable", "inconclusive", "unsupported_language") else bool(obs["flagged"])
-            rows.append({"id": r["id"], "label": int(r["label"]), "language": r["language"], "pred": pred, "score": obs.get("score")})
-    return {"status": "run", "signal": args.signal, "model_id": e.model_id, "revision": e.revision, "threshold": e.threshold,
-            "positive_label": e.positive_label, "split": args.split, "n": len(rows), "report": confusion_report(rows, args.min_n)}
+            rows.append({"id": r["id"], "label": int(r["label"]), "language": r["language"],
+                         "condition": r.get("condition"), "pred": pred, "score": obs.get("score")})
+    result = {"status": "run" if rows else "no_samples", "signal": args.signal, "model_id": e.model_id,
+              "revision": e.revision, "threshold": None if e.diagnostic_only else e.threshold,
+              "clear_below": None if e.diagnostic_only else e.clear_below,
+              "positive_label": e.positive_label, "split": args.split, "n": len(rows),
+              "report": confusion_report(rows, args.min_n)}
+    if latencies:
+        result["first_inference_ms"] = round(latencies[0])
+        result["warm_p95_ms"] = round(float(np.percentile(latencies[1:], 95))) if len(latencies) > 1 else None
+    if args.signal == "spoof" and not e.label_mapping_verified:
+        result["unverified_cutoff_diagnostic"] = confusion_report([
+            {**row, "pred": None if row["score"] is None else row["score"] >= e.threshold} for row in rows
+        ], args.min_n)
+    if getattr(args, "include_scores", False):
+        result["scores"] = rows
+    return result
+
+
+async def compare(args) -> dict:
+    return {"models": [await classify(args, path) for path in args.model_dir]}
 
 
 async def asr(args) -> dict:
@@ -135,10 +173,19 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("classify"); c.add_argument("--signal", required=True); c.add_argument("--data", required=True)
     c.add_argument("--split", default="test"); c.add_argument("--min-n", type=int, default=50)
+    c.add_argument("--model-dir", type=lambda p: Path(p).resolve(), action="append",
+                   help="Directory with manifest.json and local checkpoints. Repeat for a side-by-side comparison.")
+    c.add_argument("--include-scores", action="store_true",
+                   help="Include clip IDs, labels and model scores for offline threshold comparisons.")
     a = sub.add_parser("asr"); a.add_argument("--data", required=True); a.add_argument("--split", default="test")
     a.add_argument("--min-n", type=int, default=50)
     args = ap.parse_args()
-    res = asyncio.run(classify(args) if args.cmd == "classify" else asr(args))
+    if args.cmd == "asr":
+        res = asyncio.run(asr(args))
+    elif args.model_dir:
+        res = asyncio.run(compare(args))
+    else:
+        res = asyncio.run(classify(args))
     print(json.dumps(res, indent=2))
 
 

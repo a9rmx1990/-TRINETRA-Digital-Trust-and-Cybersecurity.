@@ -12,7 +12,9 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
+import subprocess
 import threading
 import unicodedata
 from dataclasses import dataclass, field
@@ -21,12 +23,15 @@ from typing import Any
 
 import numpy as np
 
+from . import wasitai
 from .config import settings
 
 log = logging.getLogger("trinetra.inference")
 
 SAMPLE_RATE = 16_000
 FRAME_MS = 20
+ONNX_VOICE_FILES = {"aasist_l_onnx": "aasist-l.onnx", "voiceguard_onnx": "model.onnx"}
+ONNX_VOICE_WINDOW = 64_600
 SUPPORTED_TEXT_LANGS_DEFAULT = ["en"]
 
 
@@ -129,9 +134,11 @@ class ModelEntry:
     sample_rate: int | None = None
     positive_label: str | None = None
     threshold: float = 0.5
+    clear_below: float | None = None
     window_s: float = 2.0
     enforce: bool = False
     label_mapping_verified: bool = True
+    diagnostic_only: bool = False
     checksum_file: str | None = None
     sha256: str | None = None
     hypotheses: list[str] = field(default_factory=list)
@@ -163,13 +170,22 @@ class Manifest:
             if not e.enabled:
                 e.status, e.status_reason = "disabled", "disabled in active manifest"
                 continue
+            if e.clear_below is not None and not 0 <= e.clear_below < e.threshold <= 1:
+                e.status, e.status_reason = "unavailable", "invalid voice score thresholds"
+                continue
+            if e.kind in ONNX_VOICE_FILES and e.checksum_file != ONNX_VOICE_FILES[e.kind]:
+                e.status, e.status_reason = "unavailable", f"expected a pin for {ONNX_VOICE_FILES[e.kind]}"
+                continue
             path = (model_dir / e.path) if not Path(e.path).is_absolute() else Path(e.path)
             if not path.exists():
                 e.status, e.status_reason = "unavailable", "checkpoint not installed (run tools/fetch_models.py)"
                 continue
             if e.checksum_file and e.sha256:
                 f = path / e.checksum_file
-                if not f.exists() or _sha256_file(f) != e.sha256:
+                if not f.is_file():
+                    e.status, e.status_reason = "unavailable", f"missing checkpoint file: {e.checksum_file}"
+                    continue
+                if _sha256_file(f) != e.sha256:
                     e.status, e.status_reason = "unavailable", "checksum mismatch"
                     continue
             elif not e.sha256:
@@ -185,8 +201,11 @@ class Manifest:
         for key, e in self.entries.items():
             out.append({"key": key, "signal": e.signal, "model_id": e.model_id, "revision": e.revision,
                         "license": e.license, "languages": e.languages, "enforce": e.enforce,
-                        "status": e.status, "reason": e.status_reason, "threshold": e.threshold,
+                        "status": e.status, "reason": e.status_reason,
+                        "threshold": None if e.diagnostic_only else e.threshold,
+                        "clear_below": None if e.diagnostic_only else e.clear_below,
                         "label_mapping_verified": e.label_mapping_verified,
+                        "diagnostic_only": e.diagnostic_only,
                         "evaluation_report": e.evaluation_report})
         return out
 
@@ -203,14 +222,15 @@ def _sha256_file(p: Path) -> str:
 class Runtime:
     """Holds loaded models and bounds concurrent inference."""
 
-    def __init__(self, manifest: Manifest):
+    def __init__(self, manifest: Manifest, *, model_dir: Path | None = None):
         self.manifest = manifest
+        self.model_dir = model_dir if model_dir is not None else settings.model_dir
         self._sem = asyncio.Semaphore(settings.inference_concurrency)
         self._load_lock = threading.Lock()
         self._loaded: dict[str, Any] = {}
 
     def _model_path(self, e: ModelEntry) -> str:
-        return str(settings.model_dir / e.path) if not Path(e.path).is_absolute() else e.path
+        return str(self.model_dir / e.path)
 
     def _load(self, key: str) -> Any:
         with self._load_lock:
@@ -225,6 +245,12 @@ class Runtime:
                 from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
                 obj = (AutoFeatureExtractor.from_pretrained(path, local_files_only=True),
                        AutoModelForAudioClassification.from_pretrained(path, local_files_only=True).eval())
+            elif e.kind in ONNX_VOICE_FILES:
+                import onnxruntime as ort
+                options = ort.SessionOptions()
+                options.intra_op_num_threads = 2
+                obj = ort.InferenceSession(str(Path(path) / ONNX_VOICE_FILES[e.kind]), sess_options=options,
+                                           providers=["CPUExecutionProvider"])
             elif e.kind == "sequence_classification":
                 from transformers import AutoModelForSequenceClassification, AutoTokenizer
                 obj = (AutoTokenizer.from_pretrained(path, local_files_only=True),
@@ -276,6 +302,45 @@ class Runtime:
                 "segments": segments, "text": text, "points": []}
 
     # --- voice authenticity
+    @staticmethod
+    def _voiceguard_scores(session: Any, audio: np.ndarray) -> tuple[float, list[dict]]:
+        window = ONNX_VOICE_WINDOW
+        if len(audio) <= window:
+            starts = [0]
+            audio = np.resize(audio, window)
+        else:
+            starts = list(range(0, len(audio) - window + 1, window // 2))
+            if len(starts) > 8:
+                indices = np.linspace(0, len(starts) - 1, 8).round().astype(int)
+                starts = [starts[i] for i in indices]
+        logits = []
+        for start in starts:
+            wav = audio[start:start + window].astype(np.float32) / 32768.0
+            result = session.run(["spoof_logit"], {"waveform": wav[None, :]})[0]
+            logits.append(float(np.asarray(result).item()))
+        if not all(np.isfinite(logits)):
+            raise ValueError("VoiceGuard returned a nonfinite spoof logit")
+        scores = np.exp(-np.logaddexp(0, -np.asarray(logits)))
+        points = [{"offset_ms": start * 1000 // SAMPLE_RATE, "window_ms": 4038, "score": round(float(score), 4)}
+                  for start, score in zip(starts, scores)]
+        # The publisher averages logits before converting to a score.
+        return float(np.exp(-np.logaddexp(0, -np.mean(logits)))), points
+
+    async def screen_voice(self, audio: np.ndarray) -> dict:
+        provider = os.getenv("TRINETRA_VOICE_PROVIDER")
+        if provider == "local":
+            return await self.spoof(audio)
+        key = os.getenv("WASITAI_API_KEY", "").strip()
+        reason = "WasItAIGenerated is not configured"
+        if key and provider == "wasitai":
+            try:
+                async with self._sem:
+                    return await asyncio.to_thread(wasitai.detect, audio, key)
+            except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+                log.warning("External voice screening failed: %s", exc)
+                reason = "WasItAIGenerated did not return a voice verdict"
+        return self._unavailable("voice_authenticity", None, "wasitai", reason)
+
     async def spoof(self, audio: np.ndarray) -> dict:
         key = "spoof"
         e = self._entry(key)
@@ -284,6 +349,17 @@ class Runtime:
         win = int(e.window_s * SAMPLE_RATE)
         windows = [(i, audio[i:i + win]) for i in range(0, max(1, len(audio) - win // 2), win)]
         def _go():
+            if not len(audio):
+                return None, []
+            if e.kind == "voiceguard_onnx":
+                return self._voiceguard_scores(self._load(key), audio)
+            if e.kind == "aasist_l_onnx":
+                # Match the published first-window evaluation and repeat short clips.
+                clip = np.resize(audio, ONNX_VOICE_WINDOW).astype(np.float32) / 32768.0
+                logits = self._load(key).run(["logits"], {"wav": clip[None, :]})[0][0]
+                weights = np.exp(logits - logits.max())
+                score = round(float(weights[0] / weights.sum()), 4)
+                return score, [{"offset_ms": 0, "window_ms": 4038, "score": score}]
             import torch
             fx, model = self._load(key)
             labels = {v.lower(): int(k) for k, v in model.config.id2label.items()}
@@ -300,23 +376,31 @@ class Runtime:
                     p = torch.softmax(model(**inp).logits, dim=-1)[0, pos].item()
                 pts.append({"offset_ms": int(off * 1000 / SAMPLE_RATE), "window_ms": int(e.window_s * 1000),
                             "score": round(p, 4)})
-            return pts
+            return max((p["score"] for p in pts), default=None), pts
         try:
-            pts = await self._run(_go)
+            score, pts = await self._run(_go)
         except Exception as ex:  # noqa: BLE001
             return self._unavailable("voice_authenticity", e, key, f"inference error: {type(ex).__name__}")
-        if not pts:
-            return {**self._unavailable("voice_authenticity", e, key, "no complete window"), "status": "inconclusive"}
-        score = max(p["score"] for p in pts)
+        if score is None or not np.isfinite(score):
+            return {**self._unavailable("voice_authenticity", e, key, "no valid spoof score"), "status": "inconclusive"}
         if not e.label_mapping_verified:
             return {**self._unavailable("voice_authenticity", e, key, "checkpoint class labels are unverified"),
                     "status": "inconclusive", "score": score, "points": pts,
                     "score_scale": "Raw model score, class label unverified"}
-        flagged = score >= e.threshold
+        prediction = "fake" if score >= e.threshold else "real"
+        if e.diagnostic_only:
+            return {**self._unavailable("voice_authenticity", e, key, "detector enabled for diagnostics only"),
+                    "status": "inconclusive", "score": score, "points": pts, "prediction": prediction,
+                    "score_scale": "Raw spoof score (0–1), uncalibrated"}
+        if e.clear_below is not None and e.clear_below <= score < e.threshold:
+            return {**self._unavailable("voice_authenticity", e, key, "score between decision thresholds"),
+                    "status": "inconclusive", "score": score, "points": pts,
+                    "score_scale": f"P({e.positive_label}) 0..1, uncalibrated"}
+        flagged = prediction == "fake"
         return {"signal": "voice_authenticity", "status": "flagged" if flagged else "ok",
                 "review_only": not e.enforce, "source": key, "model_id": e.model_id, "revision": e.revision,
                 "score_scale": f"P({e.positive_label}) 0..1, uncalibrated", "score": score, "flagged": flagged,
-                "threshold": e.threshold, "points": pts}
+                "threshold": e.threshold, "points": pts, "prediction": prediction}
 
     # --- spoken / typed coercion
     async def classify_text(self, signal: str, text: str | None, language: str | None) -> dict:

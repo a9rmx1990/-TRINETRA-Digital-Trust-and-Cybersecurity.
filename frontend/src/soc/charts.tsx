@@ -223,6 +223,7 @@ export function SignalChart({ evidence, onSelect }: { evidence: Evidence[]; onSe
   const levels: number[] = cap?.payload?.levels_dbfs ?? [];
   const frame = cap?.payload?.frame_ms ?? 20;
   const pts: { offset_ms: number; window_ms: number; score: number }[] = voice?.payload?.points ?? [];
+  const voiceThreshold = voice?.payload?.threshold;
   const segs: { start_ms: number; end_ms: number; text: string }[] = tr?.payload?.segments ?? [];
   const W = 640, x = (ms: number) => 40 + (ms / Math.max(1, dur)) * (W - 50);
 
@@ -274,7 +275,7 @@ export function SignalChart({ evidence, onSelect }: { evidence: Evidence[]; onSe
               {pts.map((p) => (
                 <g key={p.offset_ms} onMouseEnter={() => setHover(`${p.score}`)} onMouseLeave={() => setHover(null)}>
                   <rect x={x(p.offset_ms)} y={100 - p.score * 22} width={Math.max(2, x(p.offset_ms + p.window_ms) - x(p.offset_ms) - 2)} height={p.score * 22}
-                        fill={p.score >= (voice?.payload?.threshold ?? 0.5) ? "rgb(var(--ui-red))" : "rgb(var(--ui-blue))"} opacity=".85"
+                        fill={typeof voiceThreshold === "number" && p.score >= voiceThreshold ? "rgb(var(--ui-red))" : "rgb(var(--ui-blue))"} opacity=".85"
                         className="cursor-pointer" onClick={() => voice && onSelect(voice.id)}><title>{`window ${p.offset_ms} ms: ${p.score}`}</title></rect>
                 </g>
               ))}

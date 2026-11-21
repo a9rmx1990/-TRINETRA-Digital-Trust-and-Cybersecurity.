@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-from . import clock, graph, policy
+from . import clock, graph, intelligence, policy
 from .config import settings
 from .db import Tx, dumps, get_db, loads
 from .events import append_event, enqueue, publish_hints
@@ -211,6 +211,7 @@ def call_view(r: dict) -> dict:
             "usable": bool(r["usable"]), "quality_reason": r["quality_reason"], "language": r["language"],
             "language_supported": None if r["language_supported"] is None else bool(r["language_supported"]),
             "transcript_status": (a.get("transcript") or {}).get("status"),
+            "voice_prediction": (a.get("voice_authenticity") or {}).get("prediction"),
             "fresh_for_submission": bool(fresh and r["usable"] and not r["payment_id"]),
             "used_by_payment": bool(r["payment_id"]),
             "bytes_buffered": audio.size(r["id"]) if r["status"] == "open" else 0}
@@ -276,7 +277,7 @@ async def finish_call(owner_id: str, cid: str) -> dict:
     lang_ok = None
     if q.usable:
         rt = get_runtime()
-        spoof_obs, asr_obs = await asyncio.gather(rt.spoof(pcm), rt.transcribe(pcm))
+        spoof_obs, asr_obs = await asyncio.gather(rt.screen_voice(pcm), rt.transcribe(pcm))
         language = asr_obs.get("language")
         speech_obs = await rt.classify_text("speech_content", asr_obs.get("text"), language)
         if speech_obs.get("status") == "unsupported_language":
@@ -481,6 +482,7 @@ async def submit_payment(owner_id: str, idem_key: str | None, body: dict, *,
         if t.rowcount("UPDATE calls SET payment_id = ? WHERE id = ? AND payment_id IS NULL", (pid, call_id)) != 1:
             raise ApiError(409, "capture_already_used", "This recording was already used. Record again for a new transfer.")
         ev_ids = _store_evidence(t, pid, call_id, signals, gr, analysis)
+        intelligence.assess(t, p, benef, restricted)
         if d.decision == "ALLOW":
             settle(t, p)
         else:
@@ -547,9 +549,13 @@ def _store_evidence(t: Tx, pid: str, call_id: str, signals: dict, gr: dict, anal
 
 def settle(t: Tx, p: dict) -> None:
     sid = new_id("stl")
+    recipient = intelligence.recipient_key(t, p)
+    t.lock_keys(f"aml:{settings.analyst_scope}:{recipient}")
+    now = clock.now_ms()
     t.execute("INSERT INTO settlements(id, payment_id, account_id, counterparty_id, owner_id, amount_minor, created_ms)"
               " VALUES (?,?,?,?,?,?,?)", (sid, p["id"], p["account_id"], p["counterparty_id"], p["owner_id"],
-                                          p["amount_minor"], clock.now_ms()))
+                                          p["amount_minor"], now))
+    intelligence.scan_recipient(t, recipient, now)
 
 
 def _open_case(t: Tx, p: dict, d: policy.Decision, ev_ids: list[str], gr: dict) -> None:
