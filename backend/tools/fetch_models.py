@@ -42,14 +42,20 @@ def main(keys: list[str]) -> None:
         allow_patterns = None
         if e["kind"] == "aasist_l_onnx":
             allow_patterns = [e["checksum_file"], "LICENSE"]
+        auxiliary = e.get("auxiliary_sha256", {})
+        if auxiliary:
+            allow_patterns = [e["checksum_file"], *auxiliary]
         snapshot_download(e["model_id"], revision=info.sha, local_dir=target, allow_patterns=allow_patterns)
         f = target / e["checksum_file"]
         if not f.exists():
             raise SystemExit(f"{key}: expected {f.name} in snapshot; update checksum_file in manifest")
         e["revision"] = info.sha
         digest = sha256_file(f)
-        if e["kind"] == "aasist_l_onnx" and e.get("sha256") != digest:
+        if (e["kind"] == "aasist_l_onnx" or auxiliary) and e.get("sha256") != digest:
             raise SystemExit(f"{key}: checkpoint SHA-256 differs from the release pin")
+        for filename, expected in auxiliary.items():
+            if sha256_file(target / filename) != expected:
+                raise SystemExit(f"{key}: {filename} SHA-256 differs from the release pin")
         e["sha256"] = digest
         print(f"pinned {key}: {e['model_id']}@{info.sha[:12]} sha256={e['sha256'][:12]}")
     mf.write_text(json.dumps(data, indent=2) + "\n")

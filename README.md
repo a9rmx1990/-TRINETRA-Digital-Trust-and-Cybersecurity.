@@ -88,10 +88,16 @@ The browser's AudioWorklet streams 16 kHz mono PCM. The server measures speech a
 
 ## Voice screening and local models
 
-Live voice authenticity uses WasItAIGenerated. Set `TRINETRA_VOICE_PROVIDER=wasitai`
-and `WASITAI_API_KEY` in the backend environment and install curl 8.3 or newer.
-If the provider cannot return a verdict, the analyst case shows voice screening
-as unavailable. Whisper transcription and spoken-content screening run locally.
+Set `TRINETRA_VOICE_PROVIDER=tropa-voice-mini` to screen voice clips locally
+with the Apache-2.0 tropa-voice-mini model. Install the local model dependencies
+and run `python backend/tools/fetch_models.py tropa_voice_mini` from the project root.
+The checkpoint download is about 1.26 GB. Voice predictions and segment scores
+are advisory. Whisper transcription and spoken-content screening also run locally.
+
+Reality Defender is available as a hosted option with
+`TRINETRA_VOICE_PROVIDER=realitydefender`, `REALITY_DEFENDER_API_KEY`, and
+an account with audio scanning enabled. If a detector cannot return a verdict,
+the analyst case shows voice screening as unavailable.
 
 `backend/models/manifest.json` lists published checkpoints only. Entries stay **unavailable** until downloaded and pinned:
 
@@ -109,7 +115,7 @@ the result as inconclusive.
 | Signal | Checkpoint | Default |
 |---|---|---|
 | Speech to text | Systran/faster-whisper-base (CTranslate2) | review-only |
-| Voice authenticity | WasItAIGenerated | review-only Real/Fake/Uncertain prediction when configured. AASIST-L is available for offline evaluation. |
+| Voice authenticity | tropa-voice-mini, Reality Defender, or AASIST-L | Review-only predictions. |
 | Coercion text | bangta/Scam-detection (English, Vietnamese) | review-only, published threshold 0.69 |
 | Coercion text, zero-shot | MoritzLaurer/mDeBERTa-v3-base-mnli-xnli | disabled until evaluated |
 | Learned graph | none published with a compatible schema | disabled; deterministic graph evidence used |

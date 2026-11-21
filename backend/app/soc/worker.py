@@ -11,6 +11,7 @@ import logging
 import os
 import threading
 import time
+from functools import lru_cache
 from typing import Any
 
 from .. import clock
@@ -24,6 +25,66 @@ from .mcp import ToolError, call_tool, call_tool_in_tx
 log = logging.getLogger("trinetra.worker")
 
 AGENT = "soc-agent"
+
+
+def _tracing_enabled() -> bool:
+    return bool(os.getenv("LANGSMITH_API_KEY") and os.getenv("LANGSMITH_TRACING", "").lower() == "true")
+
+
+@lru_cache(maxsize=1)
+def _trace_client():
+    from langsmith import Client
+    return Client(api_key=os.environ["LANGSMITH_API_KEY"], hide_inputs=True, hide_outputs=True, hide_metadata=True)
+
+
+def _agent_span(name: str, fn):
+    """Optional LangSmith span with deliberately content-free input and output."""
+    if not _tracing_enabled():
+        return fn()
+    try:
+        from langsmith import traceable, tracing_context
+    except ImportError:
+        log.warning("LangSmith is enabled but the package is unavailable; running %s without tracing", name)
+        return fn()
+    completed = False
+    result = None
+    failure: BaseException | None = None
+
+    def invoke():
+        nonlocal completed, result, failure
+        try:
+            result = fn()
+            completed = True
+            return result
+        except BaseException as exc:
+            failure = exc
+            raise
+
+    try:
+        traced = traceable(
+            invoke, name=name, run_type="chain", client=_trace_client(),
+            project_name=os.getenv("LANGSMITH_PROJECT") or "trinetra-soc",
+            process_inputs=lambda _: {"stage": name},
+            process_outputs=lambda _: {"completed": True},
+        )
+        with tracing_context(enabled=True, client=_trace_client(),
+                             project_name=os.getenv("LANGSMITH_PROJECT") or "trinetra-soc"):
+            return traced()
+    except Exception as exc:
+        if completed:
+            return result
+        if failure is not None:
+            raise failure
+        log.warning("LangSmith span %s failed before execution: %s", name, type(exc).__name__)
+        return fn()
+
+
+def _measured_stage(metrics: dict, name: str, fn):
+    started = time.monotonic()
+    try:
+        return _agent_span(name, fn)
+    finally:
+        metrics[name] = {"duration_ms": int((time.monotonic() - started) * 1000)}
 
 
 class FenceLost(Exception):
@@ -88,15 +149,22 @@ def _evidence_ids(ev: list[dict], *kinds: str) -> list[str]:
 def investigate(job: dict) -> dict:
     cid = job["case_id"]
     started = time.monotonic()
+    stage_metrics: dict[str, dict] = {}
     # Triage
-    snap = call_tool("triage", "case.get", {"case_id": cid}, actor=AGENT)
-    history = call_tool("triage", "case.history", {"case_id": cid}, actor=AGENT)
+    snap, history = _measured_stage(stage_metrics, "Triage", lambda: (
+        call_tool("triage", "case.get", {"case_id": cid}, actor=AGENT),
+        call_tool("triage", "case.history", {"case_id": cid}, actor=AGENT),
+    ))
+    stage_metrics["Triage"]["tool_calls"] = 2
     version = snap["case"]["version"]
     # Investigator
-    call_ev = call_tool("investigator", "call.evidence", {"case_id": cid}, actor=AGENT)
-    graph = call_tool("investigator", "graph.get", {"case_id": cid}, actor=AGENT)
-    model_ev = call_tool("investigator", "model.evidence", {"case_id": cid}, actor=AGENT)
-    similar = call_tool("investigator", "cases.similar_closed", {"case_id": cid}, actor=AGENT)
+    call_ev, graph, model_ev, similar = _measured_stage(stage_metrics, "Investigator", lambda: (
+        call_tool("investigator", "call.evidence", {"case_id": cid}, actor=AGENT),
+        call_tool("investigator", "graph.get", {"case_id": cid}, actor=AGENT),
+        call_tool("investigator", "model.evidence", {"case_id": cid}, actor=AGENT),
+        call_tool("investigator", "cases.similar_closed", {"case_id": cid}, actor=AGENT),
+    ))
+    stage_metrics["Investigator"]["tool_calls"] = 4
 
     pay = snap["payment"]
     reasons = pay["reasons"]
@@ -109,37 +177,42 @@ def investigate(job: dict) -> dict:
     graph_ids = _evidence_ids(model_ev, "recipient_graph_snapshot", "recipient_graph")
     speech_ids = _evidence_ids(model_ev, "speech_content", "typed_remark", "transcript")
     proposals: list[dict] = []
-    if pay["decision"] == "BLOCK":
-        verdict, confidence = "blocked_by_restriction", "high"
-        rationale = "Gateway blocked the transfer because an active restriction applies."
-        cited = signal_ids
-    elif holdish or prior_fraud:
-        verdict, confidence = "likely_fraud", "medium" if holdish else "low"
-        bits = [r["text"] for r in reasons if r["effect"] in ("HOLD", "STEP_UP")]
-        if prior_fraud:
-            bits.append(f"{len(prior_fraud)} closed case(s) involving this contact were adjudicated fraud")
-        rationale = "; ".join(bits)
-        cited = graph_ids + speech_ids
-        if pay["state"] == "VERIFICATION_REQUIRED":
-            proposals.append({"action": "place_hold", "rationale": "Hold verification until an analyst reviews the fraud indicators."})
-        proposals.append({"action": "restrict_counterparty",
-                          "rationale": "Restrict the contact to stop further transfers while the case is reviewed."})
-    elif pay["state"] == "VERIFICATION_REQUIRED":
-        verdict, confidence = "needs_customer_verification", "medium"
-        rationale = "; ".join(r["text"] for r in reasons if r["effect"] == "STEP_UP") or "Additional verification required."
-        cited = signal_ids
-        if pay["direction"] == "outgoing":
-            proposals.append({"action": "issue_challenge",
-                              "rationale": "Issue a sandbox verification code to the customer after confirming identity out of band."})
-    elif pay["state"] == "HELD":
-        verdict, confidence = "insufficient_evidence", "low"
-        rationale = "Hold present without corroborating evidence."
-        cited = signal_ids
-        proposals.append({"action": "release", "rationale": "Release if the analyst confirms the hold evidence is weak."})
-    else:
-        verdict, confidence = "no_action", "medium"
-        rationale = "Payment already terminal."
-        cited = signal_ids
+    def decide():
+        if pay["decision"] == "BLOCK":
+            verdict, confidence = "blocked_by_restriction", "high"
+            rationale = "Gateway blocked the transfer because an active restriction applies."
+            cited = signal_ids
+        elif holdish or prior_fraud:
+            verdict, confidence = "likely_fraud", "medium" if holdish else "low"
+            bits = [r["text"] for r in reasons if r["effect"] in ("HOLD", "STEP_UP")]
+            if prior_fraud:
+                bits.append(f"{len(prior_fraud)} closed case(s) involving this contact were adjudicated fraud")
+            rationale = "; ".join(bits)
+            cited = graph_ids + speech_ids
+            if pay["state"] == "VERIFICATION_REQUIRED":
+                proposals.append({"action": "place_hold", "rationale": "Hold verification until an analyst reviews the fraud indicators."})
+            proposals.append({"action": "restrict_counterparty",
+                              "rationale": "Restrict the contact to stop further transfers while the case is reviewed."})
+        elif pay["state"] == "VERIFICATION_REQUIRED":
+            verdict, confidence = "needs_customer_verification", "medium"
+            rationale = "; ".join(r["text"] for r in reasons if r["effect"] == "STEP_UP") or "Additional verification required."
+            cited = signal_ids
+            if pay["direction"] == "outgoing":
+                proposals.append({"action": "issue_challenge",
+                                  "rationale": "Issue a sandbox verification code to the customer after confirming identity out of band."})
+        elif pay["state"] == "HELD":
+            verdict, confidence = "insufficient_evidence", "low"
+            rationale = "Hold present without corroborating evidence."
+            cited = signal_ids
+            proposals.append({"action": "release", "rationale": "Release if the analyst confirms the hold evidence is weak."})
+        else:
+            verdict, confidence = "no_action", "medium"
+            rationale = "Payment already terminal."
+            cited = signal_ids
+        return verdict, confidence, rationale, list(dict.fromkeys(cited)) or signal_ids
+
+    verdict, confidence, rationale, cited = _measured_stage(stage_metrics, "Decision", decide)
+    stage_metrics["Decision"]["tool_calls"] = len(proposals)
     cited = list(dict.fromkeys(cited)) or signal_ids
 
     unavailable = [k for k, v in (pay["signals"] or {}).items() if v.get("status") in ("unavailable", "inconclusive", "unsupported_language")]
@@ -153,8 +226,8 @@ def investigate(job: dict) -> dict:
         "graph": {"truncated": graph.get("truncated"), "features": graph.get("features")},
         "capture": (call_ev.get("capture_quality") or {}).get("payload", {}).get("voiced_ms"),
         "history_count": len(history), "similar_closed": [s["id"] for s in similar],
-        "metrics": {"tool_calls": 6, "evidence_items": len(model_ev),
-                    "duration_ms": int((time.monotonic() - started) * 1000)},
+        "metrics": {"tool_calls": 8 + len(proposals), "evidence_items": len(model_ev),
+                    "duration_ms": 0, "stages": stage_metrics, "started_monotonic": started},
         "generated_by": AGENT, "case_version_read": version,
     }
     return {"version": version, "report": report, "proposals": proposals, "cited": cited}
@@ -163,6 +236,8 @@ def investigate(job: dict) -> dict:
 def commit_investigation(db: Database, job: dict, res: dict) -> dict:
     def _go(t: Tx):
         c = _check_fence(t, job, res["version"])
+        report = {**res["report"], "metrics": {**res["report"]["metrics"],
+                  "stages": dict(res["report"]["metrics"]["stages"])} }
         for p in res["proposals"]:
             existing = t.one("SELECT id FROM proposals WHERE case_id = ? AND action = ? AND status = 'pending'",
                              (c["id"], p["action"]))
@@ -171,13 +246,19 @@ def commit_investigation(db: Database, job: dict, res: dict) -> dict:
             call_tool_in_tx(t, "decision", "proposal.create",
                             {"case_id": c["id"], "action": p["action"], "rationale": p["rationale"],
                              "evidence_ids": res["cited"], "case_version": c["version"]}, actor=AGENT)
-        watch = call_tool_in_tx(t, "monitor", "watch.schedule", {"case_id": c["id"]}, actor=AGENT)
-        call_tool_in_tx(t, "reporter", "report.record", {"case_id": c["id"], "report": res["report"]}, actor=AGENT)
+        watch = _measured_stage(report["metrics"]["stages"], "Monitor", lambda:
+            call_tool_in_tx(t, "monitor", "watch.schedule", {"case_id": c["id"]}, actor=AGENT))
+        report["metrics"]["stages"]["Monitor"]["tool_calls"] = 1
+        _measured_stage(report["metrics"]["stages"], "Reporter", lambda:
+            call_tool_in_tx(t, "reporter", "report.record", {"case_id": c["id"], "report": report}, actor=AGENT))
+        report["metrics"]["stages"]["Reporter"]["tool_calls"] = 1
+        report["metrics"]["duration_ms"] = int(
+            (time.monotonic() - report["metrics"].pop("started_monotonic")) * 1000)
         v = c["version"] + 1
         t.execute("UPDATE cases SET report = ?, version = ?, updated_ms = ? WHERE id = ?",
-                  (dumps(res["report"]), v, clock.now_ms(), c["id"]))
+                  (dumps(report), v, clock.now_ms(), c["id"]))
         append_event(t, case_id=c["id"], payment_id=c["payment_id"], type="investigation_completed", actor=AGENT,
-                     case_version=v, data={"verdict": res["report"]["verdict"], "confidence": res["report"]["confidence"],
+                     case_version=v, data={"verdict": report["verdict"], "confidence": report["confidence"],
                                            "proposals": [p["action"] for p in res["proposals"]],
                                            "watch": watch.get("watch_id")}, evidence_ids=res["cited"])
         complete(t, job)
@@ -258,11 +339,13 @@ def schedule_due_watches(db: Database) -> int:
 
 
 def process(db: Database, job: dict) -> Any:
-    if job["kind"] in ("investigate", "refresh_report"):
-        return commit_investigation(db, job, investigate(job))
-    if job["kind"] == "watch_check":
-        return watch_check(db, job)
-    raise RuntimeError(f"unknown job kind {job['kind']}")
+    def run():
+        if job["kind"] in ("investigate", "refresh_report"):
+            return commit_investigation(db, job, investigate(job))
+        if job["kind"] == "watch_check":
+            return watch_check(db, job)
+        raise RuntimeError(f"unknown job kind {job['kind']}")
+    return _agent_span("SOC investigation", run)
 
 
 def run_once(db: Database, worker_id: str) -> bool:

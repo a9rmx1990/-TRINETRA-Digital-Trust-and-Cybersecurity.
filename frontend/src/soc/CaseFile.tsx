@@ -92,6 +92,10 @@ export function CaseFileView({ file, stale, tz, onRefresh, onBack, onDialogChang
           {report.signals_unavailable?.length > 0 && (
             <p className="mt-1 text-xs text-soc-muted">Not available: {report.signals_unavailable.map((s: string) => SIGNAL_LABEL[s] ?? s).join(", ")}</p>
           )}
+          {report.metrics?.stages && <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-soc-muted" aria-label="Agent stage performance">
+            {Object.entries(report.metrics.stages).map(([stage, metric]: [string, any]) =>
+              <span key={stage}>{stage}: {metric.duration_ms} ms · {metric.tool_calls ?? 0} tool calls</span>)}
+          </div>}
         </Section>
       )}
       {!report && <Section title="Investigation report"><p className="text-sm text-soc-muted">Investigation queued. This updates when the SOC worker finishes.</p></Section>}

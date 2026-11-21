@@ -18,7 +18,7 @@ function LevelTrace({ levels, live }: { levels: number[]; live: boolean }) {
   const N = 120;
   const pad = N - levels.length;
   return (
-    <div className="relative h-24 w-full overflow-hidden rounded-lg bg-canvas" aria-hidden="true">
+    <div className="voice-trace relative h-24 w-full overflow-hidden rounded-md" aria-hidden="true">
       <svg viewBox={`0 0 ${N * 4} 96`} preserveAspectRatio="none" className="h-full w-full">
         <line x1="0" x2={N * 4} y1="48" y2="48" stroke="rgb(var(--ui-line))" strokeWidth="1" />
         {levels.map((v, i) => {
@@ -70,30 +70,29 @@ export function VoiceStep({ rec, onCancel, onContinue, contactName, amountText, 
 
   return (
     <div className="workspace-panel space-y-5 p-4 sm:p-6">
-      <div className="space-y-2">
-        <h2 className="text-xl font-semibold text-ink">Confirm by voice</h2>
-        <p className="max-w-[60ch] text-base text-[#3A4458]">
-          Record or upload a short voice clip saying who you’re requesting money from and why. For example: “I’m requesting {amountText || "this amount"} from {contactName || "my contact"} for {purpose?.trim() ? purpose.trim().replace(/[.]$/, "").toLowerCase() : "rent"}.” The sandbox screens the audio for signs of pressure and synthetic speech.
-        </p>
-        <p className="text-sm text-muted">When external screening is enabled, your completed audio is sent to WasItAIGenerated for a voice prediction.</p>
+      <div className="space-y-3">
+        <h2 className="workspace-title text-xl">Confirm by voice</h2>
+        <p className="max-w-[60ch] text-base text-muted">Record or upload a short clip saying who you’re requesting money from and why.</p>
+        <blockquote className="voice-example">“I’m requesting {amountText || "this amount"} from {contactName || "my contact"} for {purpose?.trim() ? purpose.trim().replace(/[.]$/, "").toLowerCase() : "rent"}.”</blockquote>
       </div>
 
-      <details className="group rounded-md border border-line bg-white px-3.5 py-2.5 text-sm text-[#3A4458]">
+      <details className="rounded-md border border-line bg-canvas px-3.5 py-2.5 text-sm text-muted">
         <summary className="cursor-pointer font-semibold text-ink">How the recording is used</summary>
         <ul className="mt-2 list-disc space-y-1 pl-5">
-          <li>Recorded or uploaded audio is sent for screening and discarded once screening finishes.</li>
+          <li>The sandbox checks for pressure and synthetic speech, then discards the recording.</li>
+          <li>When external screening is enabled, the completed clip is sent to Reality Defender for a voice prediction.</li>
           <li>The sandbox keeps measured results (speech duration, transcript if available, screening scores) with this request.</li>
           <li>An unused recording expires after 10 minutes. You can cancel at any time.</li>
         </ul>
       </details>
 
-      <label htmlFor={cid} className="flex items-start gap-3 text-base text-ink">
-        <input id={cid} type="checkbox" className="mt-1 h-4 w-4 rounded border-line text-primary focus:ring-primary"
+      <label htmlFor={cid} className="flex min-h-11 cursor-pointer items-center gap-3 rounded-md border border-line px-3 py-2 text-base font-medium">
+        <input id={cid} type="checkbox" className="h-4 w-4 shrink-0 accent-primary"
                checked={consent} disabled={recording || busy || phase === "ready"} onChange={(e) => changeConsent(e.target.checked)} />
         <span>I agree to voice screening for this request.</span>
       </label>
 
-      <div className="rounded-lg border border-line bg-white p-4 sm:p-5">
+      <div className="rounded-lg border border-line bg-canvas p-3 sm:p-4">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm font-semibold" aria-live="polite">
             {recording ? (
@@ -123,26 +122,30 @@ export function VoiceStep({ rec, onCancel, onContinue, contactName, amountText, 
               {busy ? <Spinner /> : <Mic className="h-4 w-4" aria-hidden />}Start microphone
             </button>
           )}
-          <button type="button" className="btn-quiet text-muted hover:bg-[#EEF0F4]" onClick={onCancel} disabled={busy}>
+          <button type="button" className="btn-quiet text-muted" onClick={onCancel} disabled={busy}>
             <X className="h-4 w-4" aria-hidden />Cancel request
           </button>
         </div>
         {!recording && (
           <div
-            className={`mt-4 rounded-lg border-2 border-dashed p-5 text-center transition-colors ${dragging ? "border-primary bg-[#F0F7FF]" : "border-line bg-canvas"} ${busy ? "opacity-60" : ""}`}
+            className={`mt-4 rounded-lg border border-dashed p-3 transition-colors sm:p-4 ${dragging ? "border-primary bg-primary-soft" : "border-line bg-white"} ${busy ? "opacity-60" : ""}`}
             onDragOver={(e) => { e.preventDefault(); if (!busy) setDragging(true); }}
             onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false); }}
             onDrop={(e) => { e.preventDefault(); setDragging(false); selectFile(e.dataTransfer.files[0]); }}
           >
-            <div className="mx-auto flex max-w-md flex-col items-center gap-2">
-              {fileName && phase === "ready" ? <FileAudio className="h-5 w-5 text-primary" aria-hidden /> : <AudioLines className="h-5 w-5 text-primary" aria-hidden />}
-              <p className="break-all text-sm font-medium text-ink" aria-live="polite">
-                {pendingFile?.name ?? (busy && fileName ? "Analyzing uploaded audio…" : fileName && phase === "ready" ? fileName : "Drop an audio file here, or choose a file")}
-              </p>
-              <p className="text-xs text-muted" aria-live="polite">
-                {pendingFile ? "Check the voice screening box above to analyze this file." : "Audio files up to 45 seconds and 20 MB"}
-              </p>
-              <label className="btn-secondary relative mt-1 focus-within:ring-2 focus-within:ring-primary">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="customer-list-icon">
+                {fileName && phase === "ready" ? <FileAudio size={17} aria-hidden /> : <AudioLines size={17} aria-hidden />}
+              </span>
+              <div className="min-w-0 flex-1 basis-32">
+                <p className="break-words text-sm font-semibold text-ink" aria-live="polite">
+                  {pendingFile?.name ?? (busy && fileName ? "Analyzing uploaded audio…" : fileName && phase === "ready" ? fileName : "Drop an audio file here")}
+                </p>
+                <p className="text-xs text-muted" aria-live="polite">
+                  {pendingFile ? "Check the voice screening box above to analyze this file." : "Up to 45 seconds and 20 MB"}
+                </p>
+              </div>
+              <label className="btn-secondary relative focus-within:ring-2 focus-within:ring-primary">
                 <Upload className="h-4 w-4" aria-hidden />Choose audio file
                 <input className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-default"
                        type="file" accept="audio/*,.wav,.mp3,.m4a,.aac,.ogg,.flac,.webm" disabled={busy}

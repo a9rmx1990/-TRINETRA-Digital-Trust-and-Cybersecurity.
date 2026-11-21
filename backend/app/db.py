@@ -20,7 +20,7 @@ from typing import Any, Callable, Iterable, TypeVar
 
 T = TypeVar("T")
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
@@ -351,12 +351,19 @@ CREATE TABLE IF NOT EXISTS analyst_workspace_runs (
   case_version INTEGER NOT NULL,
   model TEXT NOT NULL,
   findings TEXT NOT NULL,
+  metrics TEXT NOT NULL DEFAULT '{}',
   created_ms BIGINT NOT NULL,
   traced INTEGER NOT NULL,
   disposition TEXT,
   note TEXT,
   reviewed_ms BIGINT,
   UNIQUE (case_id, case_version)
+);
+
+CREATE TABLE IF NOT EXISTS analyst_analysis_leases (
+  case_id TEXT PRIMARY KEY REFERENCES cases(id) ON DELETE CASCADE,
+  run_id TEXT NOT NULL,
+  lease_until_ms BIGINT NOT NULL
 );
 """
 
@@ -573,6 +580,16 @@ class Database:
             t.execute("ALTER TABLE settlements RENAME COLUMN from_account_id TO account_id")
             t.execute("DROP INDEX IF EXISTS ix_settle_from")
 
+    def _upgrade_analyst_metrics(self, t: Tx) -> None:
+        if self.dialect == "sqlite":
+            columns = {r["name"] for r in t.all("PRAGMA table_info(analyst_workspace_runs)")}
+        else:
+            columns = {r["column_name"] for r in t.all(
+                "SELECT column_name FROM information_schema.columns"
+                " WHERE table_schema = current_schema() AND table_name = 'analyst_workspace_runs'")}
+        if columns and "metrics" not in columns:
+            t.execute("ALTER TABLE analyst_workspace_runs ADD COLUMN metrics TEXT NOT NULL DEFAULT '{}'")
+
     def migrate(self) -> None:
         serial = "INTEGER PRIMARY KEY AUTOINCREMENT" if self.dialect == "sqlite" else "BIGSERIAL PRIMARY KEY"
         ddl = SCHEMA.replace("{SERIAL}", serial)
@@ -583,6 +600,7 @@ class Database:
             if self.dialect == "postgres":
                 t.execute("SELECT pg_advisory_xact_lock(424242)")  # serialize concurrent migrations only
             self._upgrade_transfer_direction(t)
+            self._upgrade_analyst_metrics(t)
             for stmt in ddl.split(";"):
                 if stmt.strip():
                     t.execute(stmt.strip())
@@ -597,7 +615,7 @@ class Database:
 
     def reset_all(self) -> None:
         """Test helper: wipe every table."""
-        tables = ["aml_reviews", "aml_alert_payments", "aml_alerts", "transaction_risk", "analyst_workspace_runs",
+        tables = ["aml_reviews", "aml_alert_payments", "aml_alerts", "transaction_risk", "analyst_analysis_leases", "analyst_workspace_runs",
                   "command_results", "tool_audit", "adjudications", "watches", "proposals", "outbox",
                   "case_events", "evidence", "challenges", "settlements", "cases", "payments", "calls",
                   "restrictions", "beneficiaries", "counterparties", "accounts", "owners"]

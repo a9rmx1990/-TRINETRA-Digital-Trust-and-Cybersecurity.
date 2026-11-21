@@ -56,24 +56,24 @@ export function ReceiptView({ receipt: initial, onNew }: { receipt: Receipt; onN
 
   return (
     <div className="mx-auto max-w-xl space-y-5 rise">
-      <div className="space-y-3">
-        <h.Icon className={`h-9 w-9 ${h.cls}`} aria-hidden />
-        <h1 ref={ref} tabIndex={-1} className="workspace-title text-3xl focus:outline-none">
-          {outgoing ? "Outgoing transfer" : r.analyst_verified ? "Request verified" : h.title}
-        </h1>
-        <p className="text-base text-[#3A4458]">{outgoing ? r.message : h.message}</p>
-        {r.replayed && <p className="text-sm text-muted">This receipt is for the request you already submitted.</p>}
-      </div>
       <div className="workspace-panel">
-        <div className="flex items-baseline justify-between gap-4 border-b border-line px-5 py-4">
+        <div className="space-y-3 px-4 py-5 sm:px-6">
+          <span className="customer-list-icon"><h.Icon className={`h-5 w-5 ${h.cls}`} aria-hidden /></span>
+          <h1 ref={ref} tabIndex={-1} className="workspace-title text-3xl focus:outline-none">
+            {outgoing ? "Outgoing transfer" : r.analyst_verified ? "Request verified" : h.title}
+          </h1>
+          <p className="text-base text-muted">{outgoing ? r.message : h.message}</p>
+          {r.replayed && <p className="text-sm text-muted">This receipt is for the request you already submitted.</p>}
+        </div>
+        <div className="customer-amount flex-wrap border-y border-line">
           <StateBadge state={r.state} direction={r.direction} />
           <span className="num text-3xl font-semibold tracking-tight text-ink">{r.amount_display}</span>
         </div>
         <dl className="divide-y divide-line px-5 text-base">
           <div className="flex justify-between gap-4 py-2.5"><dt className="text-sm text-muted">{outgoing ? "Recipient" : "Requested from"}</dt>
-            <dd className="text-right">{r.beneficiary_name} <span className="text-muted">{r.beneficiary_masked}</span></dd></div>
+            <dd className="min-w-0 break-words text-right">{r.beneficiary_name} <span className="text-muted">{r.beneficiary_masked}</span></dd></div>
           <div className="flex justify-between gap-4 py-2.5"><dt className="text-sm text-muted">Reference</dt>
-            <dd className="font-mono text-sm">{r.reference}</dd></div>
+            <dd className="min-w-0 break-all text-right font-mono text-sm">{r.reference}</dd></div>
           <div className="flex justify-between gap-4 py-2.5"><dt className="text-sm text-muted">Channel</dt><dd>{r.channel}</dd></div>
           <div className="flex justify-between gap-4 py-2.5"><dt className="text-sm text-muted">Submitted</dt>
             <dd className="num">{formatDateTime(r.created_ms)}</dd></div>
@@ -172,7 +172,7 @@ export function VerifyPanel({ receipt, onResult }: { receipt: Receipt; onResult:
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4 rounded-lg border border-line bg-white p-5" aria-labelledby={`${id}-h`}>
+    <form onSubmit={submit} className="workspace-panel space-y-4 p-5" aria-labelledby={`${id}-h`}>
       <div className="space-y-1">
         <h2 id={`${id}-h`} className="text-lg font-semibold text-ink">{receipt.direction === "outgoing" ? "Transfer verification" : "Request verification"}</h2>
         <p className="text-sm text-muted">Your sandbox code appears here after an analyst approves verification.</p>

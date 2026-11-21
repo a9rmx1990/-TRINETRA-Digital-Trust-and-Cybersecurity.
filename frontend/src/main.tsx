@@ -19,7 +19,9 @@ function App() {
     document.title = isAnalyst ? `Analyst workspace · ${PRODUCT}` : PRODUCT;
   }, [legacySoc, isAnalyst]);
   if (legacySoc) return null;
-  if (isAnalyst) return <Suspense fallback={null}><AnalystApp /></Suspense>;
+  if (isAnalyst) return <Suspense fallback={<p className="mx-auto max-w-6xl px-4 py-8 text-muted" role="status">Loading analyst workspace…</p>}>
+    <AnalystApp />
+  </Suspense>;
   return <CustomerApp path={path} />;
 }
 

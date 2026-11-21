@@ -1,6 +1,8 @@
+import { ArrowDownLeft, BookOpen, ContactRound, Mic, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError } from "../lib/api";
 import { navigate } from "../lib/router";
+import { Brand } from "../ui/Brand";
 import { api, session, type Account, type Beneficiary } from "./api";
 import { AddBeneficiaryForm, Beneficiaries } from "./Beneficiaries";
 import { History } from "./History";
@@ -8,6 +10,11 @@ import { Transfer } from "./Transfer";
 import { Field, Notice, Spinner } from "./ui";
 
 type Me = { accounts: Account[]; beneficiaries: Beneficiary[] };
+const navigation = [
+  { id: "request", href: "/", label: "Request money", Icon: ArrowDownLeft },
+  { id: "contacts", href: "/beneficiaries", label: "Contacts", Icon: ContactRound },
+  { id: "history", href: "/history", label: "History", Icon: BookOpen },
+] as const;
 
 export function CustomerApp({ path }: { path: string }) {
   const [me, setMe] = useState<Me | null>(null);
@@ -35,18 +42,16 @@ export function CustomerApp({ path }: { path: string }) {
     <div className="ws-customer min-h-screen bg-canvas text-ink">
       <a href="#main" className="sr-only-focusable fixed left-3 top-3 z-50 rounded bg-white px-3 py-2 text-sm font-semibold">Skip to content</a>
       <header className="workspace-bar">
-        <div className="mx-auto flex min-h-16 max-w-6xl flex-wrap items-center gap-x-5 gap-y-2 px-4 py-2 sm:px-6">
-          <a href="/" onClick={(e) => { e.preventDefault(); navigate("/"); }} className="workspace-brand">
-            Trinetra
-          </a>
-          <span className="border-l border-line pl-4 text-sm text-muted">Banking sandbox</span>
+        <div className="mx-auto flex min-h-[4.5rem] max-w-6xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2 sm:px-6">
+          <Brand />
+          <span className="border-l border-line pl-3 text-sm text-muted">Banking sandbox</span>
           {account && (
-            <nav aria-label="Main" className="order-last flex w-full gap-1 sm:order-none sm:ml-auto sm:w-auto">
-              {[["request", "/", "Request money"], ["contacts", "/beneficiaries", "Contacts"], ["history", "/history", "History"]].map(([k, href, label]) => (
-                <a key={k} href={href} aria-current={section === k ? "page" : undefined}
+            <nav aria-label="Main" className="flex w-full flex-wrap gap-1 border-t border-line pt-2 sm:ml-auto sm:w-auto sm:border-0 sm:pt-0">
+              {navigation.map(({ id, href, label, Icon }) => (
+                <a key={id} href={href} aria-current={section === id ? "page" : undefined}
                    onClick={(e) => { e.preventDefault(); navigate(href); }}
-                   className={`inline-flex min-h-11 items-center rounded-lg px-3 text-sm font-semibold transition-colors ${section === k ? "bg-primary-soft text-primary" : "text-muted hover:bg-canvas hover:text-ink"}`}>
-                  {label}
+                   className="customer-nav-link">
+                  <Icon size={16} aria-hidden="true" className="hidden min-[380px]:block" />{label}
                 </a>
               ))}
             </nav>
@@ -93,15 +98,17 @@ function Onboarding({ onCreated }: { onCreated: () => void }) {
   }
 
   return (
-    <div className="workspace-wash grid gap-8 rounded-2xl border border-line px-5 py-8 sm:px-9 sm:py-12 md:grid-cols-[minmax(0,1fr)_minmax(280px,380px)] md:items-center lg:gap-12 lg:p-14">
-      <div className="max-w-[34rem] space-y-5">
-        <h1 className="workspace-title text-[clamp(2.15rem,5vw,3.6rem)] [text-wrap:balance]">Request money with a spoken confirmation</h1>
-        <p className="max-w-[41ch] text-[1rem] leading-relaxed text-muted">
-          Practice requesting money from a contact. A short voice confirmation helps the sandbox review your request.
-        </p>
+    <div className="workspace-entry">
+      <div className="workspace-dark workspace-entry-intro">
+        <Mic size={28} aria-hidden="true" />
+        <div className="space-y-4">
+          <h1 className="workspace-title max-w-[15ch] text-[clamp(2rem,4vw,3.25rem)] [text-wrap:balance]">Request money with a spoken confirmation</h1>
+          <p className="max-w-[39ch] text-base">A short voice confirmation helps the sandbox review your request.</p>
+        </div>
+        <p className="flex items-center gap-2 border-t border-white/20 pt-4 text-sm"><ShieldCheck size={17} aria-hidden="true" />No real money moves.</p>
       </div>
-      <form onSubmit={submit} className="workspace-panel space-y-5 p-5 sm:p-7">
-        <h2 className="text-lg font-semibold">Open a sandbox account</h2>
+      <form onSubmit={submit} className="workspace-entry-form">
+        <h2 className="workspace-title text-2xl">Open a sandbox account</h2>
         <Field label="Account name" hint="For example, Savings or Household.">
           {(p) => <input {...p} className="field-input" value={name} onChange={(e) => setName(e.target.value)} />}
         </Field>
@@ -109,7 +116,7 @@ function Onboarding({ onCreated }: { onCreated: () => void }) {
         <button type="submit" className="btn-primary w-full" disabled={busy || name.trim().length < 2}>
           {busy && <Spinner />}Create sandbox account
         </button>
-        <p className="text-sm text-muted">No real money moves. Your session stays in this browser.</p>
+        <p className="text-sm text-muted">Your session stays in this browser.</p>
       </form>
     </div>
   );

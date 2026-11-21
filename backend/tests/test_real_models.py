@@ -107,16 +107,16 @@ def test_real_inference_execution(sample_speech_pcm):
     asyncio.run(_run())
 
 
-@pytest.mark.parametrize("provider", ["local", "wasitai"])
+@pytest.mark.parametrize("provider", ["local", "realitydefender"])
 def test_payment_flow_stores_evidence_and_soc_displays_it(sample_speech_pcm, monkeypatch, provider):
     monkeypatch.setenv("TRINETRA_ANALYST_WORKSPACE_PASSWORD", "test-analyst-password")
     monkeypatch.setenv("TRINETRA_VOICE_PROVIDER", provider)
-    monkeypatch.setenv("WASITAI_API_KEY", "test-key")
+    monkeypatch.setenv("REALITY_DEFENDER_API_KEY", "test-key")
 
-    def provider_failure(*args):
-        raise subprocess.TimeoutExpired("curl", 50)
+    async def provider_failure(*args):
+        raise TimeoutError
 
-    monkeypatch.setattr("app.wasitai.detect", provider_failure)
+    monkeypatch.setattr("app.realitydefender.detect", provider_failure)
     db_path = f"/tmp/trinetra-test-real-{uuid.uuid4().hex}.db"
     test_db = Database(f"sqlite:///{db_path}")
     test_db.migrate()
@@ -184,7 +184,7 @@ def test_payment_flow_stores_evidence_and_soc_displays_it(sample_speech_pcm, mon
             assert signals["typed_remark"]["status"] == "ok"
 
             ev_map = {e["kind"]: e for e in case["evidence"]}
-            assert ev_map["voice_authenticity"]["payload"]["source"] == ("spoof" if provider == "local" else "wasitai")
+            assert ev_map["voice_authenticity"]["payload"]["source"] == ("spoof" if provider == "local" else "realitydefender")
             assert ev_map["voice_authenticity"]["status"] == expected_status
             if provider == "local":
                 assert ev_map["voice_authenticity"]["model_id"] == "SpeechAntiSpoofingBenchmarks/AASIST-L"

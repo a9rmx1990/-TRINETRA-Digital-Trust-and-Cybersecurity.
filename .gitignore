@@ -15,3 +15,5 @@ __pycache__/
 *.db-shm
 tsconfig.tsbuildinfo
 .venv/
+
+/.aws/

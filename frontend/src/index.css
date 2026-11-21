@@ -2,7 +2,6 @@
 @import "@fontsource/public-sans/500.css";
 @import "@fontsource/public-sans/600.css";
 @import "@fontsource/public-sans/700.css";
-@import "@fontsource/public-sans/600-italic.css";
 @import "@fontsource/ibm-plex-mono/400.css";
 @import "@fontsource/ibm-plex-mono/500.css";
 
@@ -13,17 +12,20 @@
 @layer base {
   :root {
     color-scheme: light;
-    --ui-canvas: 242 249 254;
-    --ui-ink: 13 38 60;
-    --ui-muted: 68 92 116;
-    --ui-line: 207 225 238;
-    --ui-control: 115 143 166;
-    --ui-blue: 0 99 154;
-    --ui-blue-hover: 0 75 119;
-    --ui-sky: 222 243 255;
+    --ui-canvas: 246 247 249;
+    --ui-ink: 23 35 51;
+    --ui-muted: 78 91 108;
+    --ui-line: 218 224 231;
+    --ui-control: 131 144 159;
+    --ui-blue: 15 92 88;
+    --ui-blue-hover: 10 69 66;
+    --ui-sky: 229 242 238;
+    --ui-navy: 18 31 49;
+    --ui-on-navy: 242 247 250;
+    --ui-on-navy-muted: 174 192 207;
     --ui-amber: 139 79 1;
     --ui-red: 175 40 33;
-    --ui-shadow: 0 16px 45px -30px rgb(10 67 105 / 32%);
+    --ui-shadow: 0 1px 2px rgb(18 31 49 / 5%);
   }
   html { -webkit-text-size-adjust: 100%; text-rendering: optimizeLegibility; }
   body { @apply bg-canvas font-sans text-ink antialiased; font-feature-settings: "ss01"; }
@@ -35,10 +37,34 @@
 
 @layer components {
   .workspace-bar { @apply border-b border-line bg-white; }
-  .workspace-brand { @apply inline-flex min-h-10 items-center text-xl font-semibold italic tracking-tight text-primary; }
-  .workspace-title { @apply font-semibold italic tracking-tight text-ink; line-height: 1.12; }
+  .workspace-brand { @apply inline-flex min-h-11 items-center gap-2.5 text-xl font-bold tracking-tight text-ink; }
+  .workspace-brand img { @apply shrink-0; }
+  .workspace-title { @apply font-bold tracking-tight text-ink; line-height: 1.12; }
   .workspace-panel { @apply rounded-xl border border-line bg-white; box-shadow: var(--ui-shadow); }
-  .workspace-wash { background: linear-gradient(150deg, #e3f5ff, #f2f9fe 64%); }
+  .workspace-wash { @apply bg-canvas; }
+  .workspace-dark { background: rgb(var(--ui-navy)); color: rgb(var(--ui-on-navy)); }
+  .workspace-dark .workspace-brand, .workspace-dark .workspace-title { color: inherit; }
+  .workspace-dark :focus-visible { outline-color: #8ad5c2; }
+  .workspace-dark .workspace-brand img { border: 1px solid rgb(255 255 255 / 23%); border-radius: .5rem; }
+
+  .customer-nav-link { @apply inline-flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm font-semibold text-muted transition-colors hover:bg-canvas hover:text-ink; }
+  .customer-nav-link[aria-current="page"] { @apply bg-primary-soft text-primary; }
+  .workspace-entry { @apply mx-auto grid max-w-5xl overflow-hidden rounded-xl border border-line bg-white; box-shadow: var(--ui-shadow); }
+  .workspace-entry-intro { @apply flex flex-col justify-between gap-8 p-6 sm:p-10; }
+  .workspace-entry-intro p:not(.workspace-title) { color: rgb(var(--ui-on-navy-muted)); }
+  .workspace-entry-form { @apply grid content-center gap-5 p-6 sm:p-10; }
+  .customer-list-row { @apply flex min-h-16 w-full items-center gap-3 px-4 py-3 text-left transition-colors sm:px-5; }
+  .customer-list-icon { @apply grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-line bg-canvas text-muted; }
+  .customer-amount { @apply flex items-baseline justify-between gap-3 bg-canvas px-4 py-4 sm:px-6; }
+  .customer-amount > :last-child { @apply text-right font-semibold tracking-tight; }
+  .request-steps { @apply grid grid-cols-3 overflow-hidden rounded-lg border border-line bg-white text-sm; }
+  .request-steps li { @apply flex min-h-11 items-center justify-center gap-2 border-r border-line px-1 font-medium text-muted last:border-r-0 sm:justify-start sm:px-3; }
+  .request-steps li[aria-current="step"] { @apply bg-primary-soft font-semibold text-primary; box-shadow: inset 0 -2px rgb(var(--ui-blue)); }
+  .request-step-index { @apply grid h-5 w-5 shrink-0 place-items-center rounded-full border border-line text-xs; }
+  .request-steps li[aria-current="step"] .request-step-index,
+  .request-steps li[data-complete="true"] .request-step-index { @apply border-primary bg-primary text-white; }
+  .voice-example { @apply break-words rounded-r-md border-l-2 border-primary bg-primary-soft px-4 py-3 text-sm leading-relaxed text-ink; }
+  .voice-trace { @apply border border-line bg-white; background-image: repeating-linear-gradient(to right, transparent 0 calc(12.5% - 1px), rgb(var(--ui-line)) calc(12.5% - 1px) 12.5%); }
 
   .field-input {
     @apply block min-h-11 w-full rounded-lg border bg-white px-3 py-2.5 text-[1rem] text-ink placeholder:text-muted
@@ -56,6 +82,10 @@
   .soc-btn-danger { @apply soc-btn bg-soc-red text-white hover:bg-red-800; }
   .soc-btn-ghost { @apply soc-btn border border-soc-line text-soc-ink hover:border-soc-muted hover:bg-soc-raised; }
   .soc-input { @apply field-input; }
+}
+
+@media (min-width: 800px) {
+  .workspace-entry { grid-template-columns: 1.12fr 1fr; min-height: 390px; }
 }
 
 @keyframes rec-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }

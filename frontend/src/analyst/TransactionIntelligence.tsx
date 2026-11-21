@@ -8,6 +8,11 @@ const bands = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
 const pageSize = 25;
 export const readable = (value: string) => value.toLowerCase().replaceAll("_", " ");
 const date = (ms: number) => new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+const tableDate = (ms: number) => {
+  const value = new Date(ms);
+  return <time dateTime={value.toISOString()}>{value.toLocaleDateString(undefined, { dateStyle: "medium" })}
+    <span className="aw-cell-secondary">{value.toLocaleTimeString(undefined, { timeStyle: "short" })}</span></time>;
+};
 const errorText = (error: unknown) => error instanceof Error ? error.message : "Request failed.";
 
 export type Assessment = {
@@ -143,8 +148,11 @@ export function TransactionIntelligence({ token, page, alertId, onAuthFailure }:
   const aml = result && "items" in result && !("summary" in result) ? result : null;
   const config = result && "version" in result ? result : null;
   const total = risk?.summary.total ?? aml?.total ?? 0;
-  return <main className="aw-main aw-intelligence">
-    <h1>{page === "risk" ? "Transaction Risk Monitor" : page === "aml" ? "AML Monitoring" : "Risk Configuration"}</h1>
+  return <main id="analyst-main" className="aw-main aw-intelligence">
+    <div className="aw-heading">
+      <h1 className="workspace-title">{page === "risk" ? "Transaction Risk Monitor" : page === "aml" ? "AML Monitoring" : "Risk Configuration"}</h1>
+      {aml && <p className="aw-muted">{aml.total.toLocaleString()} matching {aml.total === 1 ? "alert" : "alerts"}</p>}
+    </div>
     {page === "risk" && <fieldset className="aw-filters aw-card">
       <legend className="sr-only">Risk filters</legend>
       <label>Risk band<select value={band} onChange={e => { setBand(e.target.value); setOffset(0); }}>
@@ -156,9 +164,9 @@ export function TransactionIntelligence({ token, page, alertId, onAuthFailure }:
       <label>Through<input type="date" value={to} min={from || undefined} onChange={e => { setTo(e.target.value); setOffset(0); }} /></label>
       <label>Minimum amount (₹)<input type="number" min={0} max={100000000} step="0.01" value={minimum}
         onChange={e => { setMinimum(e.target.value); setOffset(0); }} /></label>
-      <label><input type="checkbox" checked={alertsOnly} onChange={e => { setAlertsOnly(e.target.checked); setOffset(0); }} /> Flagged only</label>
+      <label className="aw-flag-filter"><input type="checkbox" checked={alertsOnly} onChange={e => { setAlertsOnly(e.target.checked); setOffset(0); }} /> Flagged only</label>
     </fieldset>}
-    {page === "aml" && <fieldset className="aw-filters aw-card">
+    {page === "aml" && <fieldset className="aw-filters aw-aml-filters aw-card">
       <legend className="sr-only">AML filters</legend>
       <label>Investigation status<select value={status} onChange={e => { setStatus(e.target.value); setOffset(0); }}>
         <option value="">All statuses</option>{statuses.map(value => <option key={value} value={value}>{readable(value)}</option>)}
@@ -167,36 +175,40 @@ export function TransactionIntelligence({ token, page, alertId, onAuthFailure }:
     {error && <p className="aw-error" role="alert">{error}</p>}
     {!result && !error && <p role="status">Loading intelligence…</p>}
     {risk && <>
-      <dl className="aw-facts aw-card aw-record">
-        <div><dt>Assessed</dt><dd>{risk.summary.total}</dd></div>
-        <div><dt>Medium / High / Critical</dt><dd>{risk.summary.medium} / {risk.summary.high} / {risk.summary.critical}</dd></div>
+      <dl className="aw-metrics">
+        <div><dt>Assessed</dt><dd>{risk.summary.total.toLocaleString()}</dd></div>
+        <div><dt>Medium</dt><dd>{risk.summary.medium.toLocaleString()}</dd></div>
+        <div><dt>High</dt><dd>{risk.summary.high.toLocaleString()}</dd></div>
+        <div><dt>Critical</dt><dd>{risk.summary.critical.toLocaleString()}</dd></div>
         <div><dt>Flagged transfer value</dt><dd>{formatINR(risk.summary.flagged_minor)}</dd></div>
       </dl>
-      <div className="aw-card aw-intel-table"><table>
+      <div className="aw-card aw-intel-table" role="region" aria-label="Transaction risk results" tabIndex={0}><table>
         <caption className="sr-only">Transaction risk results</caption>
         <thead><tr><th>Payment</th><th>Account</th><th>Contact</th><th>Amount</th><th>Submitted</th><th>Risk</th><th>Signals</th><th>State</th></tr></thead>
-        <tbody>{risk.items.map(item => <tr key={item.payment_id}>
-          <td><button className="aw-intel-link" onClick={() => setSelectedRisk(item)}>{item.payment_id}</button></td>
-          <td>{item.account_id}</td><td>{item.beneficiary}</td><td>{formatINR(item.amount_minor)}</td><td>{date(item.created_ms)}</td>
-          <td>{item.score} · {item.band}</td><td>{item.signals.length}</td><td>{readable(item.state)}</td>
+        <tbody>{risk.items.map(item => <tr key={item.payment_id} data-selected={item.payment_id === selectedRisk?.payment_id}>
+          <td className="aw-id-cell"><button className="aw-intel-link aw-mono" onClick={() => setSelectedRisk(item)}>{item.payment_id}</button></td>
+          <td className="aw-mono aw-id-cell">{item.account_id}</td><td>{item.beneficiary}</td>
+          <td className="aw-num font-semibold">{formatINR(item.amount_minor)}</td><td className="aw-num">{tableDate(item.created_ms)}</td>
+          <td><span className="aw-chip aw-num" data-tone={item.band.toLowerCase()}>{item.score} · {item.band}</span></td>
+          <td className="aw-num">{item.signals.length}</td><td className="capitalize">{readable(item.state)}</td>
         </tr>)}</tbody>
       </table>{!risk.items.length && <p className="aw-record">No matching risk assessments.</p>}</div>
-      {selectedRisk && <div>
+      {selectedRisk && <section className="aw-selection">
         <div className="aw-section-title"><h2>{selectedRisk.payment_id}</h2>
           <button className="aw-button" onClick={() => setSelectedRisk(null)}>Close details</button></div>
         <p>{formatINR(selectedRisk.amount_minor)} · {selectedRisk.direction} · {selectedRisk.beneficiary}</p>
         <RiskEvidence assessment={selectedRisk} />
-      </div>}
+      </section>}
     </>}
     {aml && <>
-      <p>{aml.total} matching AML alerts</p>
-      <div className="aw-card aw-intel-table"><table>
+      <div className="aw-card aw-intel-table" role="region" aria-label="AML alerts" tabIndex={0}><table>
         <caption className="sr-only">AML alerts</caption>
         <thead><tr><th>Alert</th><th>Pattern</th><th>Recipient</th><th>Severity</th><th>Status</th><th>Detected</th></tr></thead>
-        <tbody>{aml.items.map(item => <tr key={item.id}>
-          <td><button className="aw-intel-link" onClick={() => { setSaved(""); setSelectedAlert(item.id); }}>{item.id}</button></td>
-          <td>{readable(item.pattern)}</td><td>{item.recipient_key}</td><td>{readable(item.severity)}</td>
-          <td>{readable(item.status)}</td><td>{date(item.detected_ms)}</td>
+        <tbody>{aml.items.map(item => <tr key={item.id} data-selected={item.id === selectedAlert}>
+          <td className="aw-id-cell"><button className="aw-intel-link aw-mono" onClick={() => { setSaved(""); setSelectedAlert(item.id); }}>{item.id}</button></td>
+          <td className="font-semibold capitalize">{readable(item.pattern)}</td><td className="aw-mono aw-id-cell">{item.recipient_key}</td>
+          <td><span className="aw-chip capitalize" data-tone={item.severity.toLowerCase()}>{readable(item.severity)}</span></td>
+          <td className="capitalize">{readable(item.status)}</td><td className="aw-num">{date(item.detected_ms)}</td>
         </tr>)}</tbody>
       </table>{!aml.items.length && <p className="aw-record">No matching AML alerts.</p>}</div>
     </>}
@@ -209,16 +221,16 @@ export function TransactionIntelligence({ token, page, alertId, onAuthFailure }:
     {detailError && <p className="aw-error" role="alert">{detailError}</p>}
     {selectedAlert && !detail && !detailError && <p role="status">Loading alert…</p>}
     {detail && <section className="aw-card aw-record aw-intel-evidence" aria-label="AML alert details">
-      <div className="aw-section-title"><h2>{readable(detail.pattern)}</h2><span className="aw-chip">{readable(detail.status)}</span></div>
+      <div className="aw-section-title"><h2 className="capitalize">{readable(detail.pattern)}</h2><span className="aw-chip capitalize">{readable(detail.status)}</span></div>
       <p>{detail.evidence.explanation}</p>
-      <p>{date(detail.window_start_ms)} to {date(detail.window_end_ms)}</p>
-      <dl className="aw-facts">
+      <p className="aw-muted">{date(detail.window_start_ms)} to {date(detail.window_end_ms)}</p>
+      <dl className="aw-facts aw-aml-facts">
         <div><dt>Distinct senders</dt><dd>{detail.evidence.sender_count}</dd></div>
         <div><dt>Settled transfers</dt><dd>{detail.evidence.transaction_count}</dd></div>
         <div><dt>Total settled value</dt><dd>{formatINR(detail.evidence.total_minor)}</dd></div>
       </dl>
       {detail.evidence.bounded && <p className="aw-muted">Evidence uses a bounded sample of recent settlements.</p>}
-      <details><summary>Supporting transfers</summary><div className="aw-intel-table"><table>
+      <details><summary>Supporting transfers</summary><div className="aw-intel-table aw-card mt-2" role="region" aria-label="Supporting transfers" tabIndex={0}><table>
         <thead><tr><th>Payment</th><th>Sender</th><th>Amount</th><th>Settled</th></tr></thead>
         <tbody>{detail.evidence.transactions.map(row => <tr key={row.payment_id}>
           <td>{row.payment_id}</td><td>{row.sender_key}</td><td>{formatINR(row.amount_minor)}</td><td>{date(row.created_ms)}</td>
@@ -240,7 +252,7 @@ export function TransactionIntelligence({ token, page, alertId, onAuthFailure }:
       <p>Scores help prioritize analyst review. Payment decisions use the gateway policy.</p>
       <p>Medium / High / Critical start at {config.bands.join(" / ")}. Flagged at {config.alert_score}.</p>
       <p>Baselines use up to {config.history_days} days of settled history and require {config.minimum_history} samples.</p>
-      <dl className="aw-intel-signals">{["Unusually large transaction", "New beneficiary and high value", "Unusual frequency",
+      <dl className="aw-intel-signals aw-config-rules">{["Unusually large transaction", "New beneficiary and high value", "Unusual frequency",
         "Unusual timing", "Outgoing surge", "Previously flagged entity"].map((name, index) =>
         <div key={name}><dt>{name}</dt><dd>{config.weights[index]} points</dd></div>)}</dl>
       <p>Common-beneficiary alerts require {config.aml_senders} distinct senders and {config.aml_transfers} settled transfers within {config.aml_days} days.</p>

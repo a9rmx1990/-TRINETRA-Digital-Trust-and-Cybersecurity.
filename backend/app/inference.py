@@ -10,20 +10,21 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib.util
 import json
 import logging
 import os
 import re
-import subprocess
 import threading
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import httpx
 import numpy as np
 
-from . import wasitai
+from . import realitydefender
 from .config import settings
 
 log = logging.getLogger("trinetra.inference")
@@ -141,6 +142,7 @@ class ModelEntry:
     diagnostic_only: bool = False
     checksum_file: str | None = None
     sha256: str | None = None
+    auxiliary_sha256: dict[str, str] = field(default_factory=dict)
     hypotheses: list[str] = field(default_factory=list)
     evaluation_report: str | None = None
     status: str = "unavailable"
@@ -190,6 +192,11 @@ class Manifest:
                     continue
             elif not e.sha256:
                 e.status, e.status_reason = "unavailable", "manifest entry is not pinned (missing sha256)"
+                continue
+            auxiliary_ok = all((path / name).is_file() and _sha256_file(path / name) == digest
+                               for name, digest in e.auxiliary_sha256.items())
+            if not auxiliary_ok:
+                e.status, e.status_reason = "unavailable", "auxiliary model files failed checksum verification"
                 continue
             e.status, e.status_reason = "available", "verified"
 
@@ -245,6 +252,22 @@ class Runtime:
                 from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
                 obj = (AutoFeatureExtractor.from_pretrained(path, local_files_only=True),
                        AutoModelForAudioClassification.from_pretrained(path, local_files_only=True).eval())
+            elif e.kind == "tropa_voice_mini":
+                from safetensors.torch import load_file
+                import torch
+
+                model_dir = Path(path)
+                spec = importlib.util.spec_from_file_location("tropa_voice_mini_detector", model_dir / "detector.py")
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                config = json.loads((model_dir / "config.json").read_text())
+                head = json.loads((model_dir / "serving_head.json").read_text())
+                # Memory-map the weights without first allocating a second full model.
+                torch.set_num_threads(min(4, torch.get_num_threads()))
+                with torch.device("meta"):
+                    model = module.VoiceDetectorModel(config)
+                model.load_state_dict(load_file(str(model_dir / e.checksum_file)), assign=True)
+                obj = module.VoiceDetector(model, head, "cpu")
             elif e.kind in ONNX_VOICE_FILES:
                 import onnxruntime as ort
                 options = ort.SessionOptions()
@@ -328,18 +351,52 @@ class Runtime:
 
     async def screen_voice(self, audio: np.ndarray) -> dict:
         provider = os.getenv("TRINETRA_VOICE_PROVIDER")
+        if provider == "tropa-voice-mini":
+            return await self._screen_tropa(audio)
         if provider == "local":
             return await self.spoof(audio)
-        key = os.getenv("WASITAI_API_KEY", "").strip()
-        reason = "WasItAIGenerated is not configured"
-        if key and provider == "wasitai":
+        key = os.getenv("REALITY_DEFENDER_API_KEY", "").strip()
+        reason = "Reality Defender is not configured"
+        if key and provider == "realitydefender":
             try:
                 async with self._sem:
-                    return await asyncio.to_thread(wasitai.detect, audio, key)
-            except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
-                log.warning("External voice screening failed: %s", exc)
-                reason = "WasItAIGenerated did not return a voice verdict"
-        return self._unavailable("voice_authenticity", None, "wasitai", reason)
+                    return await realitydefender.detect(audio, key)
+            except httpx.HTTPStatusError as exc:
+                log.warning("Reality Defender voice screening returned HTTP %s", exc.response.status_code)
+            except (httpx.RequestError, TimeoutError, ValueError, KeyError, TypeError, AttributeError) as exc:
+                log.warning("Reality Defender voice screening failed: %s", type(exc).__name__)
+            reason = "Reality Defender did not return a voice verdict"
+        return self._unavailable("voice_authenticity", None, "realitydefender", reason)
+
+    async def _screen_tropa(self, audio: np.ndarray) -> dict:
+        key = "tropa_voice_mini"
+        entry = self._entry(key)
+        if not entry:
+            return self._unavailable("voice_authenticity", self.manifest.get(key), key)
+        if len(audio) < 2 * SAMPLE_RATE:
+            return {**self._unavailable("voice_authenticity", entry, key, "at least two seconds of audio required"),
+                    "status": "inconclusive"}
+
+        def detect():
+            return self._load(key)(audio.astype(np.float32) / 32768.0, batch_size=2)
+
+        try:
+            result = await self._run(detect)
+            prediction = {"ai": "fake", "human": "real", "uncertain": "uncertain"}[result["verdict"]]
+            score = result["ai_score"]
+            points = [{"offset_ms": round(segment["start"] * 1000),
+                       "window_ms": round((segment["end"] - segment["start"]) * 1000),
+                       "score": segment["ai_score"]} for segment in result["segments"]]
+            if not np.isfinite(score) or not all(np.isfinite(point["score"]) for point in points):
+                raise ValueError("nonfinite tropa-voice-mini score")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("tropa-voice-mini inference failed: %s", type(exc).__name__)
+            return self._unavailable("voice_authenticity", entry, key, f"inference error: {type(exc).__name__}")
+        return {
+            **self._unavailable("voice_authenticity", entry, key, "Local voice prediction for analyst review"),
+            "status": "inconclusive", "score": score, "score_scale": "AI voice score (0–1)",
+            "prediction": prediction, "points": points,
+        }
 
     async def spoof(self, audio: np.ndarray) -> dict:
         key = "spoof"

@@ -54,7 +54,7 @@ export function Notice({ tone = "info", title, children, action }: {
       <map.Icon className={`mt-0.5 h-4 w-4 shrink-0 ${map.ic}`} aria-hidden />
       <div className="min-w-0 flex-1 space-y-1">
         {title && <p className="font-semibold">{title}</p>}
-        {children && <div className="text-[#3A4458]">{children}</div>}
+        {children && <div className="text-muted">{children}</div>}
         {action && <div className="pt-1">{action}</div>}
       </div>
     </div>
@@ -71,5 +71,5 @@ export function Spinner({ className = "h-4 w-4" }: { className?: string }) {
 }
 
 export function Panel({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <section className={`rounded-lg border border-line bg-white ${className}`}>{children}</section>;
+  return <section className={`workspace-panel ${className}`}>{children}</section>;
 }

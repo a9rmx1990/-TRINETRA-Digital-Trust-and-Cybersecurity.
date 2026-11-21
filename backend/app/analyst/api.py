@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from importlib.util import find_spec
 from typing import Literal
@@ -19,8 +20,8 @@ from ..util import ApiError, const_eq, hmac_hex
 from . import workflow
 
 router = APIRouter(prefix="/api/v2/analyst")
+log = logging.getLogger("trinetra.analyst")
 run_slots = asyncio.Semaphore(2)
-running_cases: set[str] = set()
 
 
 class Credentials(BaseModel):
@@ -107,7 +108,23 @@ def latest_run(case_id: str) -> dict | None:
     ))
     if row:
         row["findings"] = loads(row["findings"])
+        row["metrics"] = loads(row.get("metrics"), {})
     return row
+
+
+def claim_analysis_lease(case_id: str, run_id: str) -> bool:
+    now = clock.now_ms()
+    return get_db().write(lambda t: t.rowcount(
+        """INSERT INTO analyst_analysis_leases(case_id, run_id, lease_until_ms) VALUES (?, ?, ?)
+           ON CONFLICT (case_id) DO UPDATE SET run_id = excluded.run_id, lease_until_ms = excluded.lease_until_ms
+           WHERE analyst_analysis_leases.lease_until_ms <= ?""",
+        (case_id, run_id, now + 90_000, now),
+    ) == 1)
+
+
+def release_analysis_lease(case_id: str, run_id: str) -> None:
+    get_db().write(lambda t: t.execute(
+        "DELETE FROM analyst_analysis_leases WHERE case_id = ? AND run_id = ?", (case_id, run_id)))
 
 
 def _workspace_evidence(item: dict) -> dict:
@@ -201,27 +218,37 @@ async def run_analysis(case_id: str):
     readiness = status()
     if readiness["unavailable_reason"]:
         raise ApiError(503, "analyst_model_setup", readiness["unavailable_reason"])
-    if case_id in running_cases:
-        raise ApiError(409, "analyst_running", "An analysis for this case is already running.")
     if run_slots.locked():
         raise ApiError(429, "analyst_busy", "Two analyses are running. Try again shortly.")
     key = workflow.api_key()
     assert key is not None
     run_id = uuid4()
-    running_cases.add(case_id)
+    run_key = str(run_id)
+    claimed = await run_in_threadpool(claim_analysis_lease, case_id, run_key)
+    if not claimed:
+        raise ApiError(409, "analyst_running", "An analysis for this case is already running.")
     try:
+        # Another process may have completed this case/version between our first read and lease claim.
+        previous = await run_in_threadpool(latest_run, case_id)
+        if previous and previous["case_version"] == version:
+            return previous
         async with run_slots, asyncio.timeout(70):
             facts = await run_in_threadpool(analysis_facts, case)
             findings = await workflow.analyze(facts, run_id, readiness["model"], key)
             await run_in_threadpool(get_db().write, lambda t: t.execute(
-                """INSERT INTO analyst_workspace_runs (id, case_id, case_version, model, findings, created_ms, traced)
-                   VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (case_id, case_version) DO NOTHING""",
-                (str(run_id), case_id, version, readiness["model"], dumps(findings), clock.now_ms(), int(readiness["tracing"])),
+                """INSERT INTO analyst_workspace_runs (id, case_id, case_version, model, findings, metrics, created_ms, traced)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (case_id, case_version) DO NOTHING""",
+                (run_key, case_id, version, readiness["model"], dumps(findings),
+                 dumps(getattr(findings, "metrics", {})), clock.now_ms(), int(readiness["tracing"])),
             ))
     except TimeoutError:
         raise ApiError(504, "analyst_timeout", "The analysis timed out. Try again.") from None
     finally:
-        running_cases.remove(case_id)
+        try:
+            await run_in_threadpool(release_analysis_lease, case_id, run_key)
+        except Exception as exc:  # noqa: BLE001
+            # The lease expires automatically if a transient DB fault prevents release.
+            log.warning("analysis lease release failed: %s", type(exc).__name__)
     return await run_in_threadpool(latest_run, case_id)
 
 

@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
+import time
 from functools import lru_cache
 from typing import Literal, TypedDict
 from uuid import UUID
@@ -22,6 +24,7 @@ ROLES = {
     "reporter": "Write the final case brief, distinguishing observed facts from recommendations.",
 }
 RETRYABLE_GEMINI_STATUSES = {500, 502, 503, 504}
+log = logging.getLogger("trinetra.analyst.workflow")
 
 
 class Finding(BaseModel):
@@ -34,6 +37,14 @@ class Finding(BaseModel):
 class CaseState(TypedDict):
     facts: dict
     findings: dict[str, dict]
+    metrics: dict[str, dict]
+
+
+class AnalysisResult(dict):
+    """Findings preserve the existing mapping API; metrics travel alongside them."""
+    def __init__(self, findings: dict[str, dict], metrics: dict[str, dict]):
+        super().__init__(findings)
+        self.metrics = metrics
 
 
 def model_name() -> str:
@@ -133,8 +144,9 @@ async def analyze(facts: dict, run_id: UUID, model: str, key: str) -> dict:
         field.pop("minLength", None)
         field.pop("maxLength", None)
 
+    stage_metrics: dict[str, dict] = {}
     async with httpx.AsyncClient(timeout=httpx.Timeout(15, connect=5)) as client:
-        async def generate(prompt_value):
+        async def generate(prompt_value, stage: str):
             messages = prompt_value.to_messages()
             payload = {
                 "systemInstruction": {"parts": [{"text": messages[0].content}]},
@@ -145,7 +157,10 @@ async def analyze(facts: dict, run_id: UUID, model: str, key: str) -> dict:
                     "maxOutputTokens": 2048,
                 },
             }
+            attempts = 0
+            started = time.monotonic()
             for retry in (False, True):
+                attempts += 1
                 if retry:
                     await asyncio.sleep(1)
                 try:
@@ -156,9 +171,13 @@ async def analyze(facts: dict, run_id: UUID, model: str, key: str) -> dict:
                     )
                 except httpx.TimeoutException:
                     if retry:
+                        stage_metrics[stage] = {"duration_ms": int((time.monotonic() - started) * 1000),
+                                                "attempts": attempts, "status": "timeout"}
                         raise ApiError(504, "gemini_timeout", "Gemini did not respond before the timeout.") from None
                 except httpx.RequestError:
                     if retry:
+                        stage_metrics[stage] = {"duration_ms": int((time.monotonic() - started) * 1000),
+                                                "attempts": attempts, "status": "network_error"}
                         raise ApiError(502, "gemini_network", "The backend could not reach the Gemini API. Check DNS and outbound HTTPS.") from None
                 else:
                     if retry or response.status_code not in RETRYABLE_GEMINI_STATUSES:
@@ -170,24 +189,51 @@ async def analyze(facts: dict, run_id: UUID, model: str, key: str) -> dict:
                     403: "Check the API key's project and permissions.", 404: "Check the configured Gemini model.",
                     429: "Check quota and try again later.",
                 }.get(response.status_code, "Try again later.")
+                stage_metrics[stage] = {"duration_ms": int((time.monotonic() - started) * 1000),
+                                        "attempts": attempts, "status": "error"}
                 raise ApiError(502, "gemini_api", f"Gemini returned HTTP {response.status_code}. {guidance}")
             try:
-                candidate = response.json()["candidates"][0]
+                body = response.json()
+                candidate = body["candidates"][0]
                 if candidate.get("finishReason") != "STOP":
                     raise ValueError("Incomplete response")
                 result = Finding.model_validate_json("".join(
                     part["text"] for part in candidate["content"]["parts"] if not part.get("thought")
                 ))
+                usage = body.get("usageMetadata") or {}
+                input_tokens = usage.get("promptTokenCount")
+                output_tokens = usage.get("candidatesTokenCount")
+                total_tokens = usage.get("totalTokenCount")
+                stage_metrics[stage] = {
+                    "duration_ms": int((time.monotonic() - started) * 1000), "attempts": attempts,
+                    "input_tokens": input_tokens, "output_tokens": output_tokens, "total_tokens": total_tokens,
+                    "status": "ok",
+                }
+                if trace_enabled():
+                    from langsmith.run_helpers import get_current_run_tree
+                    current = get_current_run_tree()
+                    if current and all(type(v) is int and v >= 0 for v in (input_tokens, output_tokens, total_tokens)):
+                        try:
+                            current.set(usage_metadata={"input_tokens": input_tokens, "output_tokens": output_tokens,
+                                                        "total_tokens": total_tokens})
+                        except Exception as exc:  # noqa: BLE001
+                            log.warning("LangSmith token metadata was not attached: %s", type(exc).__name__)
                 return result.model_dump()
             except (ValueError, KeyError, IndexError, TypeError):
+                stage_metrics[stage] = {"duration_ms": int((time.monotonic() - started) * 1000),
+                                        "attempts": attempts, "status": "invalid_output"}
                 raise ApiError(502, "gemini_output", "Gemini returned incomplete or invalid case findings.") from None
-
-        chain = prompt | RunnableLambda(generate, name="Gemini structured analysis")
         builder = StateGraph(CaseState)
         previous = START
         for name, instruction in ROLES.items():
             async def node(state: CaseState, name=name, instruction=instruction):
                 current = stage_facts(state["facts"], name)
+                started = time.monotonic()
+
+                async def generate_stage(value):
+                    return await generate(value, name)
+
+                chain = prompt | RunnableLambda(generate_stage, name=f"Gemini {name}")
                 result = await chain.ainvoke({
                     "role": instruction,
                     "context": json.dumps({"case": current, "prior_findings": state["findings"]}),
@@ -196,8 +242,12 @@ async def analyze(facts: dict, run_id: UUID, model: str, key: str) -> dict:
                 for finding in state["findings"].values():
                     allowed_refs.update(finding["evidence_refs"])
                 if not set(result["evidence_refs"]) <= allowed_refs:
+                    stage_metrics[name]["status"] = "invalid_citation"
                     raise ApiError(502, "gemini_output", "Gemini cited an evidence reference outside this stage's context.")
-                return {"findings": {**state["findings"], name: result}}
+                if name not in stage_metrics:
+                    stage_metrics[name] = {"duration_ms": int((time.monotonic() - started) * 1000),
+                                           "attempts": 0, "status": "error"}
+                return {"findings": {**state["findings"], name: result}, "metrics": dict(stage_metrics)}
 
             builder.add_node(name, node)
             builder.add_edge(previous, name)
@@ -208,9 +258,9 @@ async def analyze(facts: dict, run_id: UUID, model: str, key: str) -> dict:
         with tracing_context(enabled=tracing, client=trace_client() if tracing else None,
                              project_name=os.getenv("LANGSMITH_PROJECT") or "trinetra-analyst"):
             result = await builder.compile().ainvoke(
-                {"facts": facts, "findings": {}}, config={"run_id": run_id, "run_name": "SOC analyst workflow"}
+                {"facts": facts, "findings": {}, "metrics": {}}, config={"run_id": run_id, "run_name": "SOC analyst workflow"}
             )
-        return result["findings"]
+        return AnalysisResult(result["findings"], result.get("metrics", stage_metrics))
 
 
 @lru_cache(maxsize=1)

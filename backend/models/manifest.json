@@ -40,6 +40,30 @@
       "enforce": false,
       "evaluation_report": "eval/VOICE_EVAL.md"
     },
+    "tropa_voice_mini": {
+      "signal": "voice_authenticity",
+      "kind": "tropa_voice_mini",
+      "enabled": true,
+      "path": "tropa-voice-mini",
+      "model_id": "wasitaigeneratedcom/ai-voice-detector-small",
+      "revision": "4858b4064b1f8530def904e6340d2780ad847160",
+      "license": "Apache-2.0",
+      "task": "audio-classification",
+      "sample_rate": 16000,
+      "positive_label": "ai",
+      "threshold": 0.9614021873019508,
+      "clear_below": 0.2,
+      "diagnostic_only": true,
+      "checksum_file": "model.safetensors",
+      "sha256": "0fa2240e5178e2e06853ab2444b7188ce72e66c12adef87e3229bdd9be5ea2f1",
+      "auxiliary_sha256": {
+        "config.json": "dcc5bf0002097c6e0409568cc461b8bc9d788bd23165e3d550ea6e5f601ac4c6",
+        "detector.py": "1ccce01fe051259dc57b62989c5ca2bb09c3d07f131d8e6f99d8a24b35053db6",
+        "serving_head.json": "2b79a8cda7f20ed65f903dcbe572e47763d56852e69b4d2fde3045de9be24aff"
+      },
+      "enforce": false,
+      "evaluation_report": null
+    },
     "text_scam": {
       "signal": "coercion_text",
       "kind": "sequence_classification",

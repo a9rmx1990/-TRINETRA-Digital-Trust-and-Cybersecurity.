@@ -1,4 +1,4 @@
-import { ArrowLeft, Check } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, newKey } from "../lib/api";
 import { formatINR, groupWhileTyping, parseINR } from "../lib/format";
@@ -33,15 +33,13 @@ const STEPS: { id: Step; label: string }[] = [
 function Stepper({ step }: { step: Step }) {
   const idx = step === "receipt" ? 3 : STEPS.findIndex((s) => s.id === step);
   return (
-    <ol className="flex items-center gap-2 text-sm" aria-label="Request progress">
+    <ol className="request-steps" aria-label="Request progress">
       {STEPS.map((s, i) => (
-        <li key={s.id} className="flex items-center gap-2" aria-current={i === idx ? "step" : undefined}>
-          <span className={`grid h-6 w-6 place-items-center rounded-full text-xs font-semibold num ${
-            i < idx ? "bg-ink text-white" : i === idx ? "border-2 border-ink text-ink" : "border border-line text-muted"}`}>
+        <li key={s.id} aria-current={i === idx ? "step" : undefined} data-complete={i < idx}>
+          <span className="request-step-index">
             {i < idx ? <Check className="h-3.5 w-3.5" aria-hidden /> : i + 1}
           </span>
-          <span className={i === idx ? "font-semibold text-ink" : "text-muted"}>{s.label}</span>
-          {i < STEPS.length - 1 && <span className="mx-1 h-px w-6 bg-line" aria-hidden />}
+          <span>{s.label}</span>
         </li>
       ))}
     </ol>
@@ -137,12 +135,14 @@ export function Transfer({ account, beneficiaries, onAddBeneficiary, onDone }: {
 
   const summary = (
     <aside className="lg:sticky lg:top-6" aria-label="Request summary">
-      <div className="workspace-panel p-5">
-        <h3 className="text-sm font-semibold text-muted">Request summary</h3>
-        <dl className="mt-3 divide-y divide-line text-base">
+      <div className="workspace-panel overflow-hidden">
+        <div className="workspace-dark space-y-2 p-5">
+          <h2 className="text-sm font-semibold">Request summary</h2>
+          <p className="num break-words text-3xl font-semibold tracking-tight">{amountText || "—"}</p>
+        </div>
+        <dl className="divide-y divide-line px-5 py-2 text-base">
           <Row k="Requested from" v={benef ? <>{benef.display_name}<span className="block text-sm text-muted">{benef.account_ref_masked}</span></> : <span className="text-muted">Not chosen</span>} />
           <Row k="Your account" v={<>{account.display_name}<span className="block text-sm text-muted">{account.account_ref_masked}</span></>} />
-          <Row k="Amount" v={<span className="num text-lg font-semibold">{amountText || <span className="text-base font-normal text-muted">—</span>}</span>} />
           <Row k="Channel" v={draft.channel} />
           <Row k="Voice" v={rec.phase === "ready" ? <span className="text-ok">Accepted</span> : <span className="text-muted">Not recorded</span>} />
         </dl>
@@ -153,7 +153,7 @@ export function Transfer({ account, beneficiaries, onAddBeneficiary, onDone }: {
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-10">
       <div className="min-w-0 space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="space-y-4">
           <h1 ref={headingRef} tabIndex={-1} className="workspace-title text-3xl focus:outline-none">Request money</h1>
           <Stepper step={step} />
         </div>
@@ -177,7 +177,7 @@ export function Transfer({ account, beneficiaries, onAddBeneficiary, onDone }: {
               {(p) => (
                 <div className="relative max-w-xs">
                   <span className="pointer-events-none absolute inset-y-0 left-3 grid place-items-center text-muted" aria-hidden>₹</span>
-                  <input {...p} inputMode="decimal" autoComplete="off" className="field-input num pl-7 text-right text-lg"
+                  <input {...p} inputMode="decimal" autoComplete="off" className="field-input num min-h-14 pl-8 text-xl font-semibold"
                          value={draft.amount} placeholder="0.00"
                          onChange={(e) => setDraft({ ...draft, amount: groupWhileTyping(e.target.value) })} />
                 </div>
@@ -203,7 +203,7 @@ export function Transfer({ account, beneficiaries, onAddBeneficiary, onDone }: {
                              onChange={(e) => setDraft({ ...draft, remark: e.target.value })} />}
             </Field>
             <div className="flex justify-end border-t border-line pt-4">
-              <button type="submit" className="btn-primary" disabled={beneficiaries.length === 0}>Continue to voice confirmation</button>
+              <button type="submit" className="btn-primary" disabled={beneficiaries.length === 0}>Continue to voice confirmation<ArrowRight size={16} aria-hidden="true" /></button>
             </div>
           </form>
         )}
@@ -223,7 +223,7 @@ export function Transfer({ account, beneficiaries, onAddBeneficiary, onDone }: {
           <div className="workspace-panel space-y-5 p-4 sm:p-6">
             <p className="text-base text-muted">Check the details before you submit.</p>
             <div className="overflow-hidden rounded-lg border border-line bg-white">
-              <div className="flex items-baseline justify-between gap-4 border-b border-line px-5 py-4">
+              <div className="customer-amount border-b border-line">
                 <span className="text-sm text-muted">Amount requested</span>
                 <span className="num text-3xl font-semibold tracking-tight text-ink">{formatINR(parsed.minor)}</span>
               </div>
@@ -261,7 +261,7 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-4 py-2.5">
       <dt className="text-sm text-muted">{k}</dt>
-      <dd className="text-right text-ink">{v}</dd>
+      <dd className="min-w-0 break-words text-right text-ink">{v}</dd>
     </div>
   );
 }

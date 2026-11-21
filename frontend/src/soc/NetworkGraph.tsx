@@ -29,19 +29,25 @@ export function NetworkGraph({ graph, evidenceId, tz }: { graph: RecipientGraph 
 
   useEffect(() => {
     if (!box.current || !graph) return;
+    const tokens = getComputedStyle(box.current);
+    const color = (name: string) => `rgb(${tokens.getPropertyValue(`--ui-${name}`).trim().split(/\s+/).join(", ")})`;
+    const ink = color("ink");
+    const accent = color("blue");
+    const muted = color("muted");
+    const raised = color("sky");
     cy.current?.destroy();
     const c = cytoscape({
       container: box.current, elements, autoungrabify: false, boxSelectionEnabled: false, wheelSensitivity: 0.2,
       style: [
-        { selector: "node", style: { "background-color": "#DEF3FF", "border-color": "#526A81", "border-width": 1.5, label: "data(label)",
-          color: "#0D263C", "font-size": 10, "text-valign": "bottom", "text-margin-y": 6, width: 22, height: 22, "font-family": "Public Sans" } },
-        { selector: "node[role = 'sender']", style: { shape: "round-rectangle", "border-color": "#0D263C", "border-width": 2 } },
-        { selector: "node[role = 'recipient']", style: { shape: "diamond", "border-color": "#00639A", "border-width": 2, width: 28, height: 28 } },
+        { selector: "node", style: { "background-color": raised, "border-color": muted, "border-width": 1.5, label: "data(label)",
+          color: ink, "font-size": 10, "text-valign": "bottom", "text-margin-y": 6, width: 22, height: 22, "font-family": "Public Sans" } },
+        { selector: "node[role = 'sender']", style: { shape: "round-rectangle", "border-color": ink, "border-width": 2 } },
+        { selector: "node[role = 'recipient']", style: { shape: "diamond", "border-color": accent, "border-width": 2, width: 28, height: 28 } },
         { selector: "node[role = 'cp']", style: { shape: "diamond" } },
-        { selector: "edge", style: { width: "data(w)", "line-color": "#526A81", "target-arrow-color": "#526A81", "target-arrow-shape": "triangle",
+        { selector: "edge", style: { width: "data(w)", "line-color": muted, "target-arrow-color": muted, "target-arrow-shape": "triangle",
           "curve-style": "bezier", "arrow-scale": 0.8 } },
-        { selector: "edge[proposed = 1]", style: { "line-style": "dashed", "line-color": "#00639A", "target-arrow-color": "#00639A", width: 2 } },
-        { selector: ":selected", style: { "border-color": "#00639A", "border-width": 3, "line-color": "#0D263C", "target-arrow-color": "#0D263C" } },
+        { selector: "edge[proposed = 1]", style: { "line-style": "dashed", "line-color": accent, "target-arrow-color": accent, width: 2 } },
+        { selector: ":selected", style: { "border-color": accent, "border-width": 3, "line-color": ink, "target-arrow-color": ink } },
       ],
       layout: { name: "cose", animate: !reduce, animationDuration: 300, padding: 24, nodeRepulsion: () => 9000, idealEdgeLength: () => 90 } as any,
     });

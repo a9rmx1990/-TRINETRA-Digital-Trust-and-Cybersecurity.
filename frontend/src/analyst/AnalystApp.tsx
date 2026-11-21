@@ -1,14 +1,21 @@
-import { ArrowLeft, ArrowRight, Check, ChevronRight, RefreshCw } from "lucide-react";
-import { lazy, Suspense, useEffect, useState, type FormEvent } from "react";
+import { Activity, ArrowLeft, ArrowRight, Check, ChevronRight, ClipboardList, LogOut, Network, RefreshCw, Settings2, ShieldCheck } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useState, type FormEvent } from "react";
 import { ApiError, request } from "../lib/api";
 import { useLocation } from "../lib/router";
 import type { CaseFile, Queue } from "../soc/api";
+import { Brand } from "../ui/Brand";
 import type { InvestigatorData } from "./InvestigatorEvidence";
 import { readable, RiskEvidence, TransactionIntelligence, type AlertLink, type Assessment } from "./TransactionIntelligence";
 import "./analyst.css";
 
 const endpoint = "/api/v2/analyst";
 const sessionKey = "trinetra.analyst.workspace";
+const navigation = [
+  { page: null, label: "Case investigations", Icon: ClipboardList },
+  { page: "risk", label: "Transaction Risk Monitor", Icon: Activity },
+  { page: "aml", label: "AML Monitoring", Icon: Network },
+  { page: "config", label: "Risk Configuration", Icon: Settings2 },
+] as const;
 const InvestigatorEvidence = lazy(() => import("./InvestigatorEvidence").then(m => ({ default: m.InvestigatorEvidence })));
 const roles = [
   { id: "triage", name: "Triage" },
@@ -26,6 +33,8 @@ const screeningSignals = [
 
 type Finding = { summary: string; confidence: string; evidence_refs: string[]; next_step: string };
 type Analysis = { id: string; case_version: number; model: string; findings: Record<string, Finding>;
+  metrics?: Record<string, { duration_ms?: number; attempts?: number; input_tokens?: number | null;
+    output_tokens?: number | null; total_tokens?: number | null; status?: string }>;
   created_ms: number; traced: number; disposition: string | null; note: string | null };
 type Detail = Pick<CaseFile, "case" | "beneficiary" | "linked_transactions"> & {
   customer: CaseFile["sender"];
@@ -58,25 +67,40 @@ export function AnalystApp() {
   const params = new URLSearchParams(search);
   const page = params.get("intelligence");
   const alertId = params.get("alert");
-  function session(value: string | null) {
+  const session = useCallback((value: string | null) => {
     if (value) sessionStorage.setItem(sessionKey, value);
     else sessionStorage.removeItem(sessionKey);
     setToken(value);
-  }
-  return <div className="aw">
-    <header className="workspace-bar aw-bar">
-      <div className="aw-brand"><span className="workspace-brand">Trinetra</span><span>Analyst workspace</span></div>
-      {token && <button className="aw-button aw-quiet" onClick={() => session(null)}>Sign out</button>}
+  }, []);
+  const signOut = useCallback(() => session(null), [session]);
+
+  if (!token) return <div className="aw">
+    <header className="workspace-bar aw-bar"><Brand href="/analyst" /></header>
+    <Login onLogin={session} />
+  </div>;
+
+  return <div className="aw aw-shell">
+    <a href="#analyst-main" className="sr-only-focusable aw-skip">Skip to content</a>
+    <header className="workspace-dark aw-rail">
+      <div className="aw-brand"><Brand href="/analyst" /><p>Analyst workspace</p></div>
+      <nav className="aw-intel-nav" aria-label="Transaction Intelligence">
+        {navigation.map(({ page: target, label, Icon }) => (
+          <a key={label} href={target ? `/analyst?intelligence=${target}` : "/analyst"}
+            aria-current={page === target ? "page" : undefined}>
+            <Icon size={17} aria-hidden="true" /><span>{label}</span>
+          </a>
+        ))}
+      </nav>
+      <div className="aw-rail-footer">
+        <span><ShieldCheck size={16} aria-hidden="true" /> Banking sandbox</span>
+        <button type="button" onClick={signOut}><LogOut size={16} aria-hidden="true" /> Sign out</button>
+      </div>
     </header>
-    {token && <nav className="aw-intel-nav" aria-label="Transaction Intelligence">
-      <a href="/analyst" aria-current={!page ? "page" : undefined}>Case investigations</a>
-      <a href="/analyst?intelligence=risk" aria-current={page === "risk" ? "page" : undefined}>Transaction Risk Monitor</a>
-      <a href="/analyst?intelligence=aml" aria-current={page === "aml" ? "page" : undefined}>AML Monitoring</a>
-      <a href="/analyst?intelligence=config" aria-current={page === "config" ? "page" : undefined}>Risk Configuration</a>
-    </nav>}
-    {!token ? <Login onLogin={session} /> : page === "risk" || page === "aml" || page === "config"
-      ? <TransactionIntelligence key={page + (alertId ?? "")} token={token} page={page} alertId={alertId} onAuthFailure={() => session(null)} />
-      : <Workspace token={token} signOut={() => session(null)} />}
+    <div className="aw-content">
+      {page === "risk" || page === "aml" || page === "config"
+        ? <TransactionIntelligence key={page + (alertId ?? "")} token={token} page={page} alertId={alertId} onAuthFailure={signOut} />
+        : <Workspace token={token} signOut={signOut} />}
+    </div>
   </div>;
 }
 
@@ -96,13 +120,20 @@ function Login({ onLogin }: { onLogin: (token: string) => void }) {
     } catch (e) { setError(message(e)); }
     finally { setBusy(false); }
   }
-  return <main className="aw-login workspace-wash"><form className="workspace-panel" onSubmit={submit}>
+  return <main className="aw-login"><div className="workspace-entry">
+    <div className="workspace-dark workspace-entry-intro">
+      <ShieldCheck size={30} aria-hidden="true" />
+      <div className="space-y-4"><p className="workspace-title text-3xl">Analyst workspace</p>
+        <p className="max-w-[32ch]">Investigate cases, review transaction risk and monitor AML alerts.</p></div>
+      <p className="border-t border-white/20 pt-4 text-sm">Banking sandbox</p>
+    </div>
+    <form className="workspace-entry-form" onSubmit={submit}>
     <h1 className="workspace-title">Analyst sign-in</h1>
     <label>Username<input name="username" defaultValue="admin" autoComplete="username" required /></label>
     <label>Workspace password<input name="password" type="password" autoComplete="current-password" required /></label>
     {error && <p className="aw-error" role="alert">{error}</p>}
     <button className="aw-button aw-primary" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
-  </form></main>;
+  </form></div></main>;
 }
 
 function Workspace({ token, signOut }: { token: string; signOut: () => void }) {
@@ -195,22 +226,24 @@ function Workspace({ token, signOut }: { token: string; signOut: () => void }) {
   }
 
   const activeDetail = detail?.case.id === selected ? detail : null;
-  return <main className="aw-main">
+  return <main id="analyst-main" className="aw-main">
     <div className="aw-heading">
       <h1 className="workspace-title">Case investigations</h1>
       <button className="aw-button" disabled={loading || busy} onClick={() => setRefresh(value => value + 1)}>
         <RefreshCw size={16} aria-hidden="true" /> Refresh
       </button>
     </div>
-    <div className="aw-status">
-      <span><strong>{queue ? queue.total.toLocaleString() : "—"}</strong> matching cases</span>
-      <span><strong>{status?.model ?? "Gemini"}</strong>{status?.unavailable_reason && " · setup required"}</span>
-      <span>LangSmith {status ? status.tracing ? "enabled" : "off" : "—"}</span>
-    </div>
+    <dl className="aw-status">
+      <div><dt>Matching cases</dt><dd>{queue ? queue.total.toLocaleString() : "—"}</dd></div>
+      <div><dt>Analysis model</dt><dd>{status?.model ?? "—"}{status?.unavailable_reason && " · setup required"}</dd></div>
+      <div><dt>LangSmith tracing</dt><dd>{status ? status.tracing ? "Enabled" : "Off" : "—"}</dd></div>
+    </dl>
     {queueError && <p className="aw-error" role="alert">{queueError}</p>}
     <div className="aw-layout">
       <aside className="aw-card aw-queue" aria-label="Case queue">
-        <div className="aw-section-title"><h2>Case queue</h2></div>
+        <div className="aw-section-title"><h2>Case queue</h2>
+          {activeDetail && <a className="aw-detail-jump" href="#selected-case">View selected case<ArrowRight size={14} aria-hidden="true" /></a>}
+        </div>
         <fieldset className="aw-filters" disabled={busy}>
           <legend className="sr-only">Queue filters</legend>
           <label>State<select value={filters.state} onChange={e => filter("state", e.target.value)}>
@@ -240,10 +273,11 @@ function Workspace({ token, signOut }: { token: string; signOut: () => void }) {
             onClick={() => setOffset(offset + queue.limit)}><ArrowRight size={16} /></button>
         </div>}
       </aside>
-      <section className="aw-detail" aria-label="Selected case">
+      <section id="selected-case" className="aw-detail" aria-label="Selected case" tabIndex={-1}>
         {caseError && <p className="aw-error" role="alert">{caseError}</p>}
         {activeDetail ? <CasePanel key={activeDetail.case.id} detail={activeDetail} status={status} operation={operation} submit={updateCase} />
-          : <div className="aw-card aw-empty" role="status">
+          : <div className="aw-card aw-empty aw-detail-empty" role="status">
+            <ClipboardList size={24} aria-hidden="true" />
             <h2>{selected && !caseError ? "Loading case…" : "No case selected"}</h2>
             <p>{selected && !caseError ? "Retrieving the case record." : "Select a case from the queue to see its details."}</p></div>}
       </section>
@@ -360,6 +394,11 @@ function CasePanel({ detail, status, operation, submit }: {
         <p>{finding.summary}</p><p><strong>Suggested next step</strong><br />{finding.next_step}</p>
         {!!finding.evidence_refs.length && <div className="aw-chips">{finding.evidence_refs.map(ref => stale
           ? <span className="aw-chip" key={ref}>{ref}</span> : <a className="aw-chip" key={ref} href={"#aw-evidence-" + ref}>{ref}</a>)}</div>}
+        {run?.metrics?.[role] && <p className="aw-muted">Agent performance · {run.metrics[role].duration_ms ?? "—"} ms
+          {run.metrics[role].attempts ? ` · ${run.metrics[role].attempts} API attempt(s)` : ""}
+          {run.metrics[role].input_tokens != null && run.metrics[role].output_tokens != null
+            ? ` · ${run.metrics[role].input_tokens} in / ${run.metrics[role].output_tokens} out tokens`
+            : " · token usage unavailable"}</p>}
       </div> : <p className="aw-muted">Run the workflow to generate findings for this case.</p>}
       {role === "investigator" && detail.risk_assessment && <RiskEvidence assessment={detail.risk_assessment} />}
       {role === "investigator" && <Suspense fallback={<p role="status">Loading visualizations…</p>}>
@@ -407,7 +446,7 @@ function CasePanel({ detail, status, operation, submit }: {
           </span>
         </div>)}
       </article>
-      <article className="aw-card aw-record">
+      <article className="aw-card aw-record aw-activity">
         <div className="aw-section-title"><h2>Case activity</h2></div>
         {!timeline.length && <p className="aw-muted">No events recorded.</p>}
         {[...timeline].reverse().map(event => <div className="aw-record-row" key={event.id}>
